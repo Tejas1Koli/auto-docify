@@ -8,6 +8,8 @@ import { Rocket, UploadCloud, Link as LinkIcon, Wand2, ListChecks, FileCode2, Bo
 import Image from 'next/image';
 import React, { useState, useTransition } from 'react';
 import { useForm } from "react-hook-form";
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import * as z from "zod";
 
 import { Button } from "@/components/ui/button";
@@ -48,10 +50,13 @@ type RegenerationFormValues = z.infer<typeof regenerationSchema>;
 
 
 const MarkdownViewer: React.FC<{ content: string }> = ({ content }) => {
-  // In a real app, use a library like react-markdown for safety and rich features.
-  // For this exercise, using dangerouslySetInnerHTML to render HTML from Markdown.
-  // Ensure AI output is sanitized if this were production.
-  return <div className="markdown-content p-4 rounded-md bg-card prose prose-sm max-w-none" dangerouslySetInnerHTML={{ __html: content || "<p>No content available.</p>" }} data-ai-hint="markdown rendered content" />;
+  return (
+    <div className="markdown-content p-4 rounded-md bg-card prose prose-sm max-w-none" data-ai-hint="markdown rendered content">
+      <ReactMarkdown remarkPlugins={[remarkGfm]}>
+        {content || "No content available."}
+      </ReactMarkdown>
+    </div>
+  );
 };
 
 
