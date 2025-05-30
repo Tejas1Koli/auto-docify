@@ -79,14 +79,11 @@ const formSchema = z.object({
         path: ["codebaseInput"],
       });
     }
-    // Ensure one of the methods is chosen if not in UI-Only mode.
-    // This specific validation might be redundant if inputMethod has a default and buttons ensure it's always set.
-    // However, the specific input (URL, file, text) being valid is covered above.
     if (!data.inputMethod && !data.uiOnlyMode) {
        ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message: "Please select an input method for the codebase.",
-        path: ["inputMethod"], // This path might need adjustment if inputMethod is not a direct form field
+        path: ["inputMethod"], 
       });
     }
   }
@@ -177,7 +174,6 @@ export default function AutoDocifyClientPage() {
             }
             codebaseInputValue = values.codebaseInput;
         } else {
-            // This case should ideally not be reached if inputMethod is always set by buttons
             toast({ title: "Input Method Error", description: "Please select a valid input method for the codebase.", variant: "destructive" });
             return;
         }
@@ -376,7 +372,6 @@ export default function AutoDocifyClientPage() {
                           form.setValue("inputMethod", "url", { shouldValidate: true });
                           form.setValue("codebaseFile", null);
                           form.setValue("codebaseInput", form.getValues("inputMethod") === "url" ? form.getValues("codebaseInput") : ""); 
-                          // Clear errors manually if needed, or rely on re-validation
                           form.clearErrors("codebaseFile");
                         }}
                         className="flex-1"
@@ -409,7 +404,6 @@ export default function AutoDocifyClientPage() {
                         Paste Code
                       </Button>
                     </div>
-                    {/* FormMessage for inputMethod can be added here if direct validation on inputMethod is needed */}
                      <FormMessage>{form.formState.errors.inputMethod?.message}</FormMessage>
                   </FormItem>
 
@@ -432,7 +426,7 @@ export default function AutoDocifyClientPage() {
                     <FormField
                       control={form.control}
                       name="codebaseFile"
-                      render={({ field: { onChange, value, ...restField } }) => ( // Destructure field to handle file input correctly
+                      render={({ field: { onChange, value, ...restField } }) => ( 
                         <FormItem>
                           <FormLabel>Upload Codebase (.zip)</FormLabel>
                           <FormControl>
@@ -441,9 +435,9 @@ export default function AutoDocifyClientPage() {
                               accept=".zip,application/zip,application/x-zip-compressed"
                               onChange={(e) => {
                                 onChange(e.target.files?.[0] || null);
-                                form.trigger("codebaseFile"); // Trigger validation on change
+                                form.trigger("codebaseFile"); 
                               }}
-                              {...restField} // Pass rest of the field props
+                              {...restField} 
                             />
                           </FormControl>
                           <FormDescription>Max file size: 50MB (conceptual limit).</FormDescription>
@@ -476,7 +470,7 @@ export default function AutoDocifyClientPage() {
             </CardContent>
             <CardFooter>
               <Button type="submit" className="w-full" disabled={isGenerating || isRegenerating || isExporting}>
-                {isGenerating || isRegenerating ? ( // Combine generating and regenerating for loader
+                {isGenerating || isRegenerating ? ( 
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                 ) : (
                   <Send className="mr-2 h-4 w-4" />
@@ -518,7 +512,7 @@ export default function AutoDocifyClientPage() {
                 ))}
               </TabsList>
               {currentDocSections.map(section => (
-                <TabsContent key={section.id} value={section.id} className="mt-4 relative group"> {/* Added group here for hover */}
+                <TabsContent key={section.id} value={section.id} className="mt-4">
                   {editingSection === section.id ? (
                     <div className="space-y-2">
                       <Textarea
@@ -534,28 +528,28 @@ export default function AutoDocifyClientPage() {
                   ) : (
                     <>
                       <MarkdownViewer content={docs[section.id]!} />
-                      <div className="absolute top-0 right-0 mt-1 mr-1 flex space-x-1 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+                      <div className="mt-3 flex space-x-2 justify-end">
                         <TooltipProvider>
                            <Tooltip>
                             <TooltipTrigger asChild>
-                              <Button variant="ghost" size="icon" onClick={() => handleEditSection(section.id)}>
-                                <Edit3 className="h-4 w-4" />
+                              <Button variant="outline" onClick={() => handleEditSection(section.id)}>
+                                <Edit3 className="mr-2 h-4 w-4" /> Edit
                               </Button>
                             </TooltipTrigger>
                             <TooltipContent><p>Edit this section</p></TooltipContent>
                           </Tooltip>
                            <Tooltip>
                             <TooltipTrigger asChild>
-                               <Button variant="ghost" size="icon" onClick={() => { setSectionToRegenerate(section.id); setShowRegenerateDialog(true); }}>
-                                <Rocket className="h-4 w-4" />
+                               <Button variant="outline" onClick={() => { setSectionToRegenerate(section.id); setShowRegenerateDialog(true); }}>
+                                <Rocket className="mr-2 h-4 w-4" /> Regenerate
                               </Button>
                             </TooltipTrigger>
                             <TooltipContent><p>Regenerate this section</p></TooltipContent>
                           </Tooltip>
                            <Tooltip>
                             <TooltipTrigger asChild>
-                              <Button variant="ghost" size="icon" onClick={() => handleDownloadMarkdown(`${section.id}.md`, docs[section.id]!)}>
-                                <Download className="h-4 w-4" />
+                              <Button variant="outline" onClick={() => handleDownloadMarkdown(`${section.id}.md`, docs[section.id]!)}>
+                                <Download className="mr-2 h-4 w-4" /> Download .md
                               </Button>
                             </TooltipTrigger>
                             <TooltipContent><p>Download as .md</p></TooltipContent>
@@ -573,7 +567,7 @@ export default function AutoDocifyClientPage() {
                 <TooltipProvider>
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <Button variant="outline" className="w-full" onClick={() => triggerExport('pdf')} disabled={true || isExporting}>
+                      <Button variant="outline" className="w-full" onClick={() => triggerExport('pdf')} disabled={true}>
                         <FileText className="mr-2 h-4 w-4" /> Download PDF
                       </Button>
                     </TooltipTrigger>
@@ -583,7 +577,7 @@ export default function AutoDocifyClientPage() {
                 <TooltipProvider>
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <Button variant="outline" className="w-full" onClick={() => triggerExport('notion')} disabled={true || isExporting}>
+                      <Button variant="outline" className="w-full" onClick={() => triggerExport('notion')} disabled={true}>
                         <NotebookText className="mr-2 h-4 w-4" /> Export to Notion
                       </Button>
                     </TooltipTrigger>
