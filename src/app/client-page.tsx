@@ -38,7 +38,7 @@ const MarkdownViewer: React.FC<{ content: string }> = ({ content }) => {
 const formSchema = z.object({
   inputMethod: z.enum(["url", "file", "text"]),
   codebaseInput: z.string().optional(), // URL or Text input
-  codebaseFile: z.instanceof(File).optional(), // File input
+  codebaseFile: z.instanceof(File).optional().nullable(), // File input, allow null for clearing
   uiOnlyMode: z.boolean().default(false),
   uiDescription: z.string().optional(),
 }).superRefine((data, ctx) => {
@@ -51,7 +51,6 @@ const formSchema = z.object({
       });
     }
   } else {
-    // Original logic for non-UI-Only mode
     if (data.inputMethod === "url" && (!data.codebaseInput || !data.codebaseInput.startsWith('https://github.com/'))) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
@@ -80,16 +79,15 @@ const formSchema = z.object({
         path: ["codebaseInput"],
       });
     }
-    if (data.inputMethod !== "text" && data.inputMethod !== "url" && data.inputMethod !== "file") {
-        // This case should ideally not be reached if inputMethod enum is exhaustive
-        // but as a fallback, ensure at least one input type has data if not uiOnlyMode
-        if (!data.codebaseInput && !data.codebaseFile) {
-             ctx.addIssue({
-                code: z.ZodIssueCode.custom,
-                message: "Codebase input (URL, file, or text) is required.",
-                path: ["codebaseInput"], // Or a more general path
-            });
-        }
+    // Ensure one of the methods is chosen if not in UI-Only mode.
+    // This specific validation might be redundant if inputMethod has a default and buttons ensure it's always set.
+    // However, the specific input (URL, file, text) being valid is covered above.
+    if (!data.inputMethod && !data.uiOnlyMode) {
+       ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Please select an input method for the codebase.",
+        path: ["inputMethod"], // This path might need adjustment if inputMethod is not a direct form field
+      });
     }
   }
 });
@@ -127,6 +125,7 @@ export default function AutoDocifyClientPage() {
     defaultValues: {
       inputMethod: "url",
       codebaseInput: "",
+      codebaseFile: null,
       uiOnlyMode: false,
       uiDescription: "",
     },
@@ -153,11 +152,9 @@ export default function AutoDocifyClientPage() {
     let uiOnlyModeValue = values.uiOnlyMode;
     setCurrentUiOnlyMode(uiOnlyModeValue);
 
-
     if (uiOnlyModeValue) {
         if (!values.uiDescription || values.uiDescription.trim() === "") {
-            toast({ title: "UI Description Missing", description: "Please provide a UI description or Figma link when UI-Only mode is active.", variant: "destructive" });
-            // form.setError("uiDescription", { type: "manual", message: "UI description or Figma link is required." });
+            form.setError("uiDescription", { type: "manual", message: "UI description or Figma link is required." });
             return;
         }
         codebaseInputValue = values.uiDescription;
@@ -170,17 +167,25 @@ export default function AutoDocifyClientPage() {
                 toast({ title: "File Read Error", description: "Could not read the uploaded file.", variant: "destructive" });
                 return;
             }
-        } else if (values.codebaseInput) {
+        } else if (values.inputMethod === "url" || values.inputMethod === "text") {
+            if (!values.codebaseInput || values.codebaseInput.trim() === "") {
+                let message = "Input required.";
+                if (values.inputMethod === "url") message = "GitHub URL is required.";
+                if (values.inputMethod === "text") message = "Pasted code is required.";
+                form.setError("codebaseInput", { type: "manual", message });
+                return;
+            }
             codebaseInputValue = values.codebaseInput;
         } else {
-            toast({ title: "Input Missing", description: "Please provide codebase input (URL, file, or text).", variant: "destructive" });
+            // This case should ideally not be reached if inputMethod is always set by buttons
+            toast({ title: "Input Method Error", description: "Please select a valid input method for the codebase.", variant: "destructive" });
             return;
         }
     }
     
-    setOriginalCodebaseInputForRegen(codebaseInputValue); // Store for regeneration
+    setOriginalCodebaseInputForRegen(codebaseInputValue);
     setOriginalUiOnlyModeForRegen(uiOnlyModeValue);
-    setDocs(null); // Clear previous docs
+    setDocs(null);
 
     startGenerationTransition(async () => {
       try {
@@ -254,12 +259,12 @@ export default function AutoDocifyClientPage() {
   };
 
   const triggerExport = async (exportType: 'pdf' | 'notion' | 'gitbook') => {
-    if (exportType === 'pdf' || exportType === 'notion') {
-      toast({ title: "Feature Coming Soon!", description: `Export to ${exportType} is under development.` });
-      return;
-    }
     if (!docs) {
       toast({ title: "No Docs to Export", description: "Please generate documentation first.", variant: "destructive" });
+      return;
+    }
+     if (exportType === 'pdf' || exportType === 'notion') {
+      toast({ title: "Feature Coming Soon!", description: `Export to ${exportType} is under development.` });
       return;
     }
 
@@ -361,28 +366,52 @@ export default function AutoDocifyClientPage() {
                 />
               ) : (
                 <>
-                  <FormField
-                    control={form.control}
-                    name="inputMethod"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Input Method for Codebase</FormLabel>
-                        <Select onValueChange={field.onChange} defaultValue={field.value}>
-                          <FormControl>
-                            <SelectTrigger>
-                              <SelectValue placeholder="Select input method" />
-                            </SelectTrigger>
-                          </FormControl>
-                          <SelectContent>
-                            <SelectItem value="url">GitHub URL</SelectItem>
-                            <SelectItem value="file">Upload .zip</SelectItem>
-                            <SelectItem value="text">Paste Code</SelectItem>
-                          </SelectContent>
-                        </Select>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
+                  <FormItem>
+                    <FormLabel>Input Method for Codebase</FormLabel>
+                    <div className="flex space-x-2 pt-1">
+                      <Button
+                        type="button"
+                        variant={form.watch("inputMethod") === "url" ? "default" : "outline"}
+                        onClick={() => {
+                          form.setValue("inputMethod", "url", { shouldValidate: true });
+                          form.setValue("codebaseFile", null);
+                          form.setValue("codebaseInput", form.getValues("inputMethod") === "url" ? form.getValues("codebaseInput") : ""); 
+                          // Clear errors manually if needed, or rely on re-validation
+                          form.clearErrors("codebaseFile");
+                        }}
+                        className="flex-1"
+                      >
+                        GitHub URL
+                      </Button>
+                      <Button
+                        type="button"
+                        variant={form.watch("inputMethod") === "file" ? "default" : "outline"}
+                        onClick={() => {
+                          form.setValue("inputMethod", "file", { shouldValidate: true });
+                          form.setValue("codebaseInput", "");
+                           form.clearErrors("codebaseInput");
+                        }}
+                        className="flex-1"
+                      >
+                        Upload .zip
+                      </Button>
+                      <Button
+                        type="button"
+                        variant={form.watch("inputMethod") === "text" ? "default" : "outline"}
+                        onClick={() => {
+                          form.setValue("inputMethod", "text", { shouldValidate: true });
+                          form.setValue("codebaseFile", null);
+                          form.setValue("codebaseInput", form.getValues("inputMethod") === "text" ? form.getValues("codebaseInput") : "");
+                           form.clearErrors("codebaseFile");
+                        }}
+                        className="flex-1"
+                      >
+                        Paste Code
+                      </Button>
+                    </div>
+                    {/* FormMessage for inputMethod can be added here if direct validation on inputMethod is needed */}
+                     <FormMessage>{form.formState.errors.inputMethod?.message}</FormMessage>
+                  </FormItem>
 
                   {form.watch("inputMethod") === "url" && (
                     <FormField
@@ -403,14 +432,18 @@ export default function AutoDocifyClientPage() {
                     <FormField
                       control={form.control}
                       name="codebaseFile"
-                      render={({ field }) => (
+                      render={({ field: { onChange, value, ...restField } }) => ( // Destructure field to handle file input correctly
                         <FormItem>
                           <FormLabel>Upload Codebase (.zip)</FormLabel>
                           <FormControl>
                             <Input
                               type="file"
                               accept=".zip,application/zip,application/x-zip-compressed"
-                              onChange={(e) => field.onChange(e.target.files?.[0])}
+                              onChange={(e) => {
+                                onChange(e.target.files?.[0] || null);
+                                form.trigger("codebaseFile"); // Trigger validation on change
+                              }}
+                              {...restField} // Pass rest of the field props
                             />
                           </FormControl>
                           <FormDescription>Max file size: 50MB (conceptual limit).</FormDescription>
@@ -443,7 +476,7 @@ export default function AutoDocifyClientPage() {
             </CardContent>
             <CardFooter>
               <Button type="submit" className="w-full" disabled={isGenerating || isRegenerating || isExporting}>
-                {isGenerating ? (
+                {isGenerating || isRegenerating ? ( // Combine generating and regenerating for loader
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                 ) : (
                   <Send className="mr-2 h-4 w-4" />
@@ -469,7 +502,7 @@ export default function AutoDocifyClientPage() {
         </div>
       )}
 
-      {docs && !isGenerating && (
+      {docs && !(isGenerating || isRegenerating || isExporting) && (
         <Card className="shadow-xl w-full">
           <CardHeader>
             <CardTitle className="text-2xl">Generated Documentation</CardTitle>
@@ -485,7 +518,7 @@ export default function AutoDocifyClientPage() {
                 ))}
               </TabsList>
               {currentDocSections.map(section => (
-                <TabsContent key={section.id} value={section.id} className="mt-4 relative">
+                <TabsContent key={section.id} value={section.id} className="mt-4 relative group"> {/* Added group here for hover */}
                   {editingSection === section.id ? (
                     <div className="space-y-2">
                       <Textarea
@@ -561,7 +594,8 @@ export default function AutoDocifyClientPage() {
                   <Tooltip>
                     <TooltipTrigger asChild>
                        <Button variant="outline" className="w-full" onClick={() => triggerExport('gitbook')} disabled={isExporting}>
-                        {isExporting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Download className="mr-2 h-4 w-4" /> }
+                        {isExporting && <Loader2 className="mr-2 h-4 w-4 animate-spin" /> }
+                        {!isExporting && <Download className="mr-2 h-4 w-4" />}
                         Download GitBook .zip
                       </Button>
                     </TooltipTrigger>
