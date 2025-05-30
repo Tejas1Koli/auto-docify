@@ -2,7 +2,7 @@
 "use client";
 
 import type { GenerateDocumentationOutput } from '@/ai/flows/generate-documentation';
-import type { ExportToGitBookOutput } from '@/ai/flows/export-to-gitbook-flow';
+import type { ExportToGitBookOutput } from '@/ai/flows/export-to-gitbook-flow.ts'; // Corrected import path if needed
 import { handleGenerateDocs, handleRegenerateSection, handleExportToGitBook } from '@/lib/actions';
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Rocket, UploadCloud, Link as LinkIcon, Wand2, FileCode2, BookUser, MessagesSquare, FileDown, GitBranch, RefreshCcw, Edit3, FileType2, Image as ImageIcon, Download } from 'lucide-react';
@@ -36,17 +36,16 @@ const formSchema = z.object({
   if (data.uiOnlyMode) {
     return !!data.uiDescription && data.uiDescription.trim() !== "";
   }
-  // If not uiOnlyMode, then either URL or File must be provided based on inputType
   if (data.inputType === "url") return !!data.githubUrl && data.githubUrl.trim() !== "";
-  if (data.inputType === "file") return !!data.codeFile && data.codeFile[0]; // Check if file is present
-  return false; // Fallback, should be caught by specific checks
+  if (data.inputType === "file") return !!data.codeFile && data.codeFile.length > 0 && data.codeFile[0];
+  return false;
 }, {
   message: "Input is required. For UI-Only mode, provide a UI description. For code mode, provide a GitHub URL or .zip file.",
-  path: ["uiDescription"], // Specific path helps focus error message
+  path: ["uiDescription"], 
 }).refine(data => data.uiOnlyMode || (data.inputType === "url" ? !!data.githubUrl && data.githubUrl.trim() !== "" : true), {
   message: "GitHub URL is required when input type is URL and not in UI-Only mode.",
   path: ["githubUrl"],
-}).refine(data => data.uiOnlyMode || (data.inputType === "file" ? !!data.codeFile && data.codeFile[0] : true), {
+}).refine(data => data.uiOnlyMode || (data.inputType === "file" ? !!data.codeFile && data.codeFile.length > 0 && data.codeFile[0] : true), {
   message: "A .zip file is required when input type is file and not in UI-Only mode.",
   path: ["codeFile"],
 });
@@ -134,11 +133,12 @@ export default function AutoDocifyClientPage() {
             try {
                 generationInputString = await readFileAsDataURL(file);
             } catch (error) {
+                console.error("File Read Error:", error);
                 toast({ title: "File Read Error", description: "Could not read the uploaded file.", variant: "destructive" });
                 return;
             }
         } else {
-            // This block should ideally not be reached if zod refinement is correct
+             // This case should ideally be caught by form validation, but as a fallback:
             toast({ title: "Input Error", description: "Please provide the necessary input for documentation.", variant: "destructive" });
             return;
         }
@@ -146,7 +146,7 @@ export default function AutoDocifyClientPage() {
 
     setCurrentCodebaseInputForRegen(generationInputString);
     setCurrentUiOnlyModeForRegen(values.uiOnlyMode);
-    setDocs(null);
+    setDocs(null); // Clear previous docs
 
     startGenerationTransition(async () => {
       try {
@@ -157,8 +157,9 @@ export default function AutoDocifyClientPage() {
           setDocs(result.data);
           toast({ title: "Documentation Generated!", description: "Your docs are ready to view." });
         }
-      } catch (error) {
-        toast({ title: "Unexpected Error", description: "An error occurred during generation.", variant: "destructive" });
+      } catch (error: any) {
+        console.error("Unexpected generation error:", error);
+        toast({ title: "Unexpected Error", description: error.message || "An error occurred during generation.", variant: "destructive" });
       }
     });
   };
@@ -168,7 +169,7 @@ export default function AutoDocifyClientPage() {
       toast({ title: "Error", description: "No codebase context found for regeneration.", variant: "destructive" });
       return;
     }
-    if (!docs) { // Should not happen if regenerate button is only visible with docs
+    if (!docs) {
          toast({ title: "Error", description: "No existing documentation to regenerate from.", variant: "destructive" });
          return;
     }
@@ -179,7 +180,7 @@ export default function AutoDocifyClientPage() {
           currentCodebaseInputForRegen,
           values.sectionName,
           values.tone,
-          currentUiOnlyModeForRegen // Pass UI mode context
+          currentUiOnlyModeForRegen
         );
         if (result.error) {
           toast({ title: "Regeneration Failed", description: result.error, variant: "destructive" });
@@ -192,8 +193,9 @@ export default function AutoDocifyClientPage() {
           setShowRegenerateDialog(false);
           regenerationForm.reset();
         }
-      } catch (error) {
-        toast({ title: "Unexpected Error", description: "An error occurred during regeneration.", variant: "destructive" });
+      } catch (error: any) {
+        console.error("Unexpected regeneration error:", error);
+        toast({ title: "Unexpected Error", description: error.message || "An error occurred during regeneration.", variant: "destructive" });
       }
     });
   };
@@ -230,7 +232,7 @@ export default function AutoDocifyClientPage() {
       return;
     }
 
-    // Only GitBook export will proceed from here
+    // GitBook export
     if (!docs) {
       toast({ title: "No Docs", description: "Please generate documentation first to export to GitBook.", variant: "destructive" });
       return;
@@ -238,9 +240,9 @@ export default function AutoDocifyClientPage() {
 
     setCurrentExportType('gitbook');
     startExportTransition(async () => {
-      let result;
+      let result: { data?: ExportToGitBookOutput; error?: string; message?: string } | undefined;
       try {
-        result = await handleExportToGitBook(docs!); // docs cannot be null here due to the check above
+        result = await handleExportToGitBook(docs);
         if (result?.data?.content && result.data.fileName && result.data.mimeType) {
           const { fileName, mimeType, content } = result.data;
           const link = document.createElement('a');
@@ -252,11 +254,12 @@ export default function AutoDocifyClientPage() {
           toast({ title: "GitBook Export Ready", description: `Downloaded ${fileName}. You can now import it into GitBook.` });
         } else if (result?.error) {
           toast({ title: `GitBook Export Failed`, description: result.error, variant: "destructive" });
-        } else if (result?.message) { // To handle messages from the flow
+        } else if (result?.message) { // Catch-all for other messages from the flow
            toast({ title: `GitBook Export Status`, description: result.message });
         }
       } catch (error: any) {
         const errorMessage = error instanceof Error ? error.message : "An unexpected error occurred.";
+        console.error("Export Error:", error);
         toast({ title: "Export Error", description: `An unexpected error occurred during GitBook export: ${errorMessage}`, variant: "destructive" });
       } finally {
         setCurrentExportType(null);
@@ -281,8 +284,6 @@ export default function AutoDocifyClientPage() {
     ];
   };
   const currentDocSections = docSectionsConfig(currentUiOnlyModeForRegen);
-
-  console.log("Preparing to render AutoDocifyClientPage component layout.");
 
   return (
     <div className="w-full max-w-4xl space-y-8">
@@ -569,7 +570,7 @@ export default function AutoDocifyClientPage() {
                                   <FormControl>
                                     <SelectTrigger>
                                       <SelectValue placeholder="Select a section" />
-                                    </SelectTrigger>
+                                    </Trigger>
                                   </FormControl>
                                   <SelectContent>
                                     {currentDocSections.map(s => (
