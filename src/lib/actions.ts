@@ -59,15 +59,12 @@ export async function handleExportToNotion(docs: GenerateDocumentationOutput): P
 
 export async function handleExportToGitBook(docs: GenerateDocumentationOutput): Promise<ActionResult<ExportToGitBookOutput>> {
   try {
-    console.log("Attempting to export to GitBook:", docs.readme.substring(0, 50) + "...");
+    console.log("Attempting to generate .zip for GitBook:", docs.readme.substring(0, 50) + "...");
     const result = await exportToGitBookFlow(docs);
-    if (result.success) {
-      return { message: result.message, data: result };
-    } else {
-      return { error: result.message, data: result };
-    }
+    // The flow now directly returns the data needed for download, including the message.
+    return { data: result, message: result.message };
   } catch (error: any) {
-    console.error("Error initiating GitBook export:", error);
-    return { error: error.message || "Failed to initiate GitBook export." };
+    console.error("Error generating .zip for GitBook export:", error);
+    return { error: error.message || "Failed to generate .zip for GitBook export." };
   }
 }

@@ -3,9 +3,10 @@
 
 import type { GenerateDocumentationOutput } from '@/ai/flows/generate-documentation';
 import type { RegenerateDocumentationSectionOutput } from '@/ai/flows/regenerate-documentation-section';
+import type { ExportToGitBookOutput } from '@/ai/flows/export-to-gitbook-flow'; // Import new type
 import { handleGenerateDocs, handleRegenerateSection, handleExportToPDF, handleExportToNotion, handleExportToGitBook } from '@/lib/actions';
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Rocket, UploadCloud, Link as LinkIcon, Wand2, ListChecks, FileCode2, BookUser, MessagesSquare, FileDown, GitBranch, RefreshCcw, Edit3, FileType2, Image as ImageIcon } from 'lucide-react';
+import { Rocket, UploadCloud, Link as LinkIcon, Wand2, ListChecks, FileCode2, BookUser, MessagesSquare, FileDown, GitBranch, RefreshCcw, Edit3, FileType2, Image as ImageIcon, Download } from 'lucide-react';
 import Image from 'next/image';
 import React, { useState, useTransition } from 'react';
 import { useForm } from "react-hook-form";
@@ -31,19 +32,17 @@ const formSchema = z.object({
   githubUrl: z.string().optional(),
   codeFile: z.any().optional(),
   uiOnlyMode: z.boolean().default(false),
-  uiDescription: z.string().optional(), // New field for UI description if uiOnlyMode is true
+  uiDescription: z.string().optional(),
 }).refine(data => {
   if (data.uiOnlyMode) {
-    // If UI-Only mode, uiDescription OR (githubUrl/codeFile if provided for context) is acceptable
-    return !!data.uiDescription || !!data.githubUrl || (!!data.codeFile && data.codeFile[0]);
+    return !!data.uiDescription && data.uiDescription.trim() !== "";
   }
-  // If not UI-Only mode, code input is mandatory
   if (data.inputType === "url") return !!data.githubUrl && data.githubUrl.trim() !== "";
   if (data.inputType === "file") return !!data.codeFile && data.codeFile[0];
   return false;
 }, {
   message: "Input is required. For UI-Only mode, provide a UI description or link. For code mode, provide a GitHub URL or .zip file.",
-  path: ["inputType"],
+  path: ["inputType"], 
 });
 
 type FormValues = z.infer<typeof formSchema>;
@@ -71,7 +70,7 @@ export default function AutoDocifyClientPage() {
   const [isRegenerating, startRegenerationTransition] = useTransition();
   const [isExporting, startExportTransition] = useTransition();
   const [docs, setDocs] = useState<GenerateDocumentationOutput | null>(null);
-  const [currentCodebaseInputForRegen, setCurrentCodebaseInputForRegen] = useState<string>(''); // Stores the input used for the current docs, for regeneration context
+  const [currentCodebaseInputForRegen, setCurrentCodebaseInputForRegen] = useState<string>('');
   const [currentUiOnlyModeForRegen, setCurrentUiOnlyModeForRegen] = useState<boolean>(false);
   const [showRegenerateDialog, setShowRegenerateDialog] = useState(false);
   const [editingSection, setEditingSection] = useState<{ name: keyof GenerateDocumentationOutput, content: string } | null>(null);
@@ -111,26 +110,16 @@ export default function AutoDocifyClientPage() {
     let generationInputString = "";
 
     if (values.uiOnlyMode) {
-        generationInputString = values.uiDescription || values.githubUrl || ""; // Prioritize dedicated UI description, then URL
-        if (!generationInputString && values.inputType === "file" && values.codeFile && values.codeFile[0]) {
-             const file = values.codeFile[0];
-             // For UI mode, if a zip is uploaded, we might treat it as context or show a message.
-             // For now, let's assume it's a description or URL. If a file is the only thing, it's less clear for UI mode.
-             // This path needs more defined behavior for UI-only file uploads.
-             // For now, if uiDescription and githubUrl are empty, we rely on the refine validation to catch it.
-             // Or, we can assume the file *contains* UI descriptions/assets - too complex for now.
-             // Let's prioritize uiDescription or githubUrl (as Figma link) for uiOnlyMode.
-             toast({title: "UI Mode Input", description: "Using UI description or URL. File upload in UI-Only mode needs specific handling (e.g., for assets) - currently uses description/URL.", variant: "default"});
-        }
-        if (!generationInputString) {
-            toast({title: "Input Error", description: "For UI-Only mode, please provide a UI description or a Figma/design tool link in the URL field.", variant: "destructive"});
+        generationInputString = values.uiDescription || "";
+         if (!generationInputString) {
+            toast({title: "Input Error", description: "For UI-Only mode, please provide a UI description or a Figma/design tool link.", variant: "destructive"});
             return;
         }
         toast({
             title: "UI-Only Mode Activated",
-            description: "Generating documentation based on your UI description/link. The AI will focus on UI elements, flows, and user experience.",
+            description: "Generating documentation based on your UI description/link.",
         });
-    } else { // Code mode
+    } else { 
         if (values.inputType === "url" && values.githubUrl) {
             generationInputString = values.githubUrl;
         } else if (values.inputType === "file" && values.codeFile && values.codeFile[0]) {
@@ -151,7 +140,7 @@ export default function AutoDocifyClientPage() {
         }
     }
 
-    setCurrentCodebaseInputForRegen(generationInputString); // Save for regeneration context
+    setCurrentCodebaseInputForRegen(generationInputString); 
     setCurrentUiOnlyModeForRegen(values.uiOnlyMode);
     setDocs(null);
 
@@ -182,7 +171,6 @@ export default function AutoDocifyClientPage() {
 
     startRegenerationTransition(async () => {
       try {
-        // Pass currentUiOnlyModeForRegen to handleRegenerateSection
         const result = await handleRegenerateSection(
           currentCodebaseInputForRegen,
           values.sectionName,
@@ -236,14 +224,29 @@ export default function AutoDocifyClientPage() {
     startExportTransition(async () => {
       let result;
       try {
-        if (exportType === 'pdf') result = await handleExportToPDF(docs);
-        else if (exportType === 'notion') result = await handleExportToNotion(docs);
-        else if (exportType === 'gitbook') result = await handleExportToGitBook(docs);
+        if (exportType === 'pdf') {
+          result = await handleExportToPDF(docs);
+        } else if (exportType === 'notion') {
+          result = await handleExportToNotion(docs);
+        } else if (exportType === 'gitbook') {
+          result = await handleExportToGitBook(docs);
+          if (result?.data?.content && result.data.fileName && result.data.mimeType) {
+            const { fileName, mimeType, content } = result.data;
+            const link = document.createElement('a');
+            link.href = `data:${mimeType};base64,${content}`;
+            link.download = fileName;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            toast({ title: "GitBook Export Ready", description: `Downloaded ${fileName}. You can now import it into GitBook.` });
+            return; // Prevent further toast messages for this specific case
+          }
+        }
 
         if (result?.error) {
           toast({ title: `${exportType.toUpperCase()} Export Failed`, description: result.error, variant: "destructive" });
         } else if (result?.message) {
-          toast({ title: `${exportType.toUpperCase()} Export Started`, description: result.message });
+          toast({ title: `${exportType.toUpperCase()} Export Status`, description: result.message });
         }
       } catch (error) {
         toast({ title: "Export Error", description: `An unexpected error occurred during ${exportType} export.`, variant: "destructive" });
@@ -254,9 +257,9 @@ export default function AutoDocifyClientPage() {
   const docSectionsConfig = (uiMode: boolean): Array<{ id: keyof GenerateDocumentationOutput; title: string; icon: React.ElementType }> => {
     if (uiMode) {
       return [
-        { id: 'readme', title: 'UI Overview', icon: FileCode2 }, // 'readme' key now holds UI Overview
-        { id: 'apiDocs', title: 'Key Screens/Components', icon: GitBranch }, // 'apiDocs' key now holds Key Screens
-        { id: 'userManual', title: 'User Flow Ideas', icon: BookUser }, // 'userManual' key now holds User Flows
+        { id: 'readme', title: 'UI Overview', icon: FileCode2 }, 
+        { id: 'apiDocs', title: 'Key Screens/Components', icon: GitBranch }, 
+        { id: 'userManual', title: 'User Flow Ideas', icon: BookUser }, 
         { id: 'faq', title: 'UI FAQ', icon: MessagesSquare },
       ];
     }
@@ -298,10 +301,10 @@ export default function AutoDocifyClientPage() {
                     <div className="space-y-0.5">
                       <FormLabel className="text-base">
                         <ImageIcon className="inline-block mr-2 h-5 w-5 text-primary" />
-                        UI-Focused Documentation (e.g., Figma, UI Description)
+                        UI-Focused Documentation
                       </FormLabel>
                       <p className="text-sm text-muted-foreground">
-                        Enable to generate docs from a UI description or Figma/design tool link. Input method below will be used for this.
+                        Enable to generate docs from a UI description or Figma/design tool link.
                       </p>
                     </div>
                     <FormControl>
@@ -497,9 +500,9 @@ export default function AutoDocifyClientPage() {
               <Card className="mt-8 bg-secondary/50">
                 <CardHeader>
                   <CardTitle>Actions & Exports</CardTitle>
-                  <CardDescription>Export your documentation to various platforms. Full integration coming soon!</CardDescription>
+                  <CardDescription>Export your documentation to various platforms or download as individual files.</CardDescription>
                 </CardHeader>
-                <CardContent className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4"> {/* Adjusted to 3 cols for better spacing */}
+                <CardContent className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4"> 
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <Button variant="outline" onClick={() => triggerExport('pdf')} disabled={isExporting || isGenerating || isRegenerating}>
@@ -507,7 +510,7 @@ export default function AutoDocifyClientPage() {
                       </Button>
                     </TooltipTrigger>
                     <TooltipContent>
-                      <p>Export documentation as a PDF file. (Framework active, full PDF generation coming soon!)</p>
+                      <p>Export documentation as a PDF file. (Coming soon!)</p>
                     </TooltipContent>
                   </Tooltip>
                   <Tooltip>
@@ -518,18 +521,18 @@ export default function AutoDocifyClientPage() {
                       </Button>
                     </TooltipTrigger>
                     <TooltipContent>
-                      <p>Send your documentation to Notion. (Framework active, full Notion API integration coming soon!)</p>
+                      <p>Send your documentation to Notion. (Coming soon!)</p>
                     </TooltipContent>
                   </Tooltip>
                   <Tooltip>
                     <TooltipTrigger asChild>
                        <Button variant="outline" onClick={() => triggerExport('gitbook')} disabled={isExporting || isGenerating || isRegenerating}>
-                        <Image src="https://placehold.co/16x16.png" alt="GitBook Logo" width={16} height={16} className="mr-2" data-ai-hint="GitBook logo"/>
-                        {isExporting ? "Exporting..." : "Export to GitBook"}
+                        <Download className="mr-2 h-4 w-4" /> {/* Changed Icon */}
+                        {isExporting ? "Generating Zip..." : "Download GitBook .zip"}
                        </Button>
                     </TooltipTrigger>
                     <TooltipContent>
-                      <p>Publish documentation to GitBook. (Framework active, full GitBook API integration coming soon!)</p>
+                      <p>Download a .zip file with markdown docs, ready for GitBook import.</p>
                     </TooltipContent>
                   </Tooltip>
                   <Dialog open={showRegenerateDialog} onOpenChange={setShowRegenerateDialog}>
