@@ -25,28 +25,13 @@ import { Textarea } from '@/components/ui/textarea';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { useToast } from "@/hooks/use-toast";
 
+// Simplified formSchema to troubleshoot parsing errors
 const formSchema = z.object({
   inputType: z.enum(["url", "file"], { required_error: "Please select an input type" }),
   githubUrl: z.string().optional(),
   codeFile: z.any().optional(),
   uiOnlyMode: z.boolean().default(false),
   uiDescription: z.string().optional(),
-}).refine(data => {
-  if (data.uiOnlyMode) {
-    return !!data.uiDescription && data.uiDescription.trim() !== "";
-  }
-  if (data.inputType === "url") return !!data.githubUrl && data.githubUrl.trim() !== "";
-  if (data.inputType === "file") return !!data.codeFile && data.codeFile.length > 0 && data.codeFile[0];
-  return false;
-}, {
-  message: "Input is required. For UI-Only mode, provide a UI description. For code mode, provide a GitHub URL or .zip file.",
-  path: ["uiDescription"], // Path can be more general if needed, or specific to the first failing field
-}).refine(data => !data.uiOnlyMode && data.inputType === "url" ? !!data.githubUrl && data.githubUrl.trim() !== "" : true, {
-  message: "GitHub URL is required when input type is URL and not in UI-Only mode.",
-  path: ["githubUrl"],
-}).refine(data => !data.uiOnlyMode && data.inputType === "file" ? !!data.codeFile && data.codeFile.length > 0 && data.codeFile[0] : true, {
-  message: "A .zip file is required when input type is file and not in UI-Only mode.",
-  path: ["codeFile"],
 });
 
 type FormValues = z.infer<typeof formSchema>;
@@ -72,19 +57,19 @@ const MarkdownViewer: React.FC<{ content: string }> = ({ content }) => {
 export default function AutoDocifyClientPage() {
   const [isGenerating, startGenerationTransition] = useTransition();
   const [isRegenerating, startRegenerationTransition] = useTransition();
-  const [isExporting, startExportTransition] = useTransition();
+  const [isExporting, startExportTransition] = useTransition(); // For GitBook export
+  
   const [docs, setDocs] = useState<GenerateDocumentationOutput | null>(null);
   const [currentCodebaseInputForRegen, setCurrentCodebaseInputForRegen] = useState<string>('');
   const [currentUiOnlyModeForRegen, setCurrentUiOnlyModeForRegen] = useState<boolean>(false);
   const [showRegenerateDialog, setShowRegenerateDialog] = useState(false);
   const [editingSection, setEditingSection] = useState<{ name: keyof GenerateDocumentationOutput, content: string } | null>(null);
   const [tempEditedContent, setTempEditedContent] = useState<string>("");
-  const [currentExportType, setCurrentExportType] = useState<'pdf' | 'notion' | 'gitbook' | null>(null);
 
   const { toast } = useToast();
 
   const form = useForm<FormValues>({
-    resolver: zodResolver(formSchema),
+    resolver: zodResolver(formSchema), // Using simplified schema
     defaultValues: {
       inputType: "url",
       githubUrl: "",
@@ -111,24 +96,35 @@ export default function AutoDocifyClientPage() {
     }
   };
 
+  // Simplified onSubmit to troubleshoot parsing errors
   const onSubmit = async (values: FormValues) => {
+    console.log("Form submitted with values:", values);
     let generationInputString = "";
 
     if (values.uiOnlyMode) {
-      generationInputString = values.uiDescription || "";
-      if (!generationInputString) {
+      if (!values.uiDescription || values.uiDescription.trim() === "") {
         form.setError("uiDescription", { type: "manual", message: "UI description or Figma link is required for UI-Only mode." });
         return;
       }
+      generationInputString = values.uiDescription;
     } else {
-      if (values.inputType === "url" && values.githubUrl) {
+      if (values.inputType === "url") {
+        if (!values.githubUrl || values.githubUrl.trim() === "") {
+           form.setError("githubUrl", { type: "manual", message: "GitHub URL is required." });
+           return;
+        }
         generationInputString = values.githubUrl;
-      } else if (values.inputType === "file" && values.codeFile && values.codeFile[0]) {
+      } else if (values.inputType === "file") {
+        if (!values.codeFile || !values.codeFile[0]) {
+          form.setError("codeFile", { type: "manual", message: "A .zip file is required." });
+          return;
+        }
         const file = values.codeFile[0];
         if (file.type !== "application/zip" && !file.name.endsWith('.zip')) {
           form.setError("codeFile", { type: "manual", message: "Please upload a .zip file for codebase analysis." });
           return;
         }
+        // Actual file reading is intensive, simulate for now or add back carefully
         try {
           generationInputString = await readFileAsDataURL(file);
         } catch (error) {
@@ -137,17 +133,21 @@ export default function AutoDocifyClientPage() {
           return;
         }
       } else {
-        toast({ title: "Input Error", description: "Please provide the necessary input for documentation.", variant: "destructive" });
+        // Should not happen if inputType is validated
+        toast({ title: "Input Error", description: "Please select an input method and provide the necessary input.", variant: "destructive" });
         return;
       }
     }
 
     setCurrentCodebaseInputForRegen(generationInputString);
     setCurrentUiOnlyModeForRegen(values.uiOnlyMode);
-    setDocs(null);
+    setDocs(null); 
 
     startGenerationTransition(async () => {
       try {
+        // console.log("Starting generation with input:", generationInputString, "UI Mode:", values.uiOnlyMode);
+        // // Simulate result for now
+        // const result = { data: { readme: "Simulated README", apiDocs: "Simulated API Docs", userManual: "Simulated User Manual", faq: "Simulated FAQ" }, error: null };
         const result = await handleGenerateDocs(generationInputString, values.uiOnlyMode);
         if (result.error) {
           toast({ title: "Generation Failed", description: result.error, variant: "destructive" });
@@ -162,12 +162,13 @@ export default function AutoDocifyClientPage() {
     });
   };
 
+
   const onRegenerateSubmit = async (values: RegenerationFormValues) => {
     if (!currentCodebaseInputForRegen) {
       toast({ title: "Error", description: "No codebase context found for regeneration.", variant: "destructive" });
       return;
     }
-    if (!docs) {
+    if (!docs) { 
       toast({ title: "Error", description: "No existing documentation to regenerate from.", variant: "destructive" });
       return;
     }
@@ -178,13 +179,13 @@ export default function AutoDocifyClientPage() {
           currentCodebaseInputForRegen,
           values.sectionName,
           values.tone,
-          currentUiOnlyModeForRegen // Pass this flag
+          currentUiOnlyModeForRegen 
         );
         if (result.error) {
           toast({ title: "Regeneration Failed", description: result.error, variant: "destructive" });
         } else if (result.data) {
           setDocs(prevDocs => ({
-            ...prevDocs!,
+            ...prevDocs!, 
             [values.sectionName as keyof GenerateDocumentationOutput]: result.data!.regeneratedContent,
           }));
           toast({ title: "Section Regenerated!", description: `${values.sectionName} has been updated.` });
@@ -197,6 +198,7 @@ export default function AutoDocifyClientPage() {
       }
     });
   };
+
 
   const readFileAsDataURL = (file: File): Promise<string> => {
     return new Promise((resolve, reject) => {
@@ -222,12 +224,12 @@ export default function AutoDocifyClientPage() {
 
   const triggerExport = async (exportType: 'pdf' | 'notion' | 'gitbook') => {
     if (exportType === 'pdf') {
-      toast({ title: "PDF Export (Coming Soon!)", description: "Full PDF export functionality is under development." });
-      return;
+        toast({ title: "PDF Export (Coming Soon!)", description:"Full PDF export functionality is under development."});
+        return;
     }
     if (exportType === 'notion') {
-      toast({ title: "Notion Export (Coming Soon!)", description: "Full Notion export functionality is under development." });
-      return;
+        toast({ title: "Notion Export (Coming Soon!)", description:"Full Notion export functionality is under development."});
+        return;
     }
 
     if (!docs) {
@@ -235,10 +237,9 @@ export default function AutoDocifyClientPage() {
       return;
     }
 
-    setCurrentExportType(exportType);
-    startExportTransition(async () => {
-      try {
-        if (exportType === 'gitbook') {
+    if (exportType === 'gitbook') {
+      startExportTransition(async () => {
+        try {
           const result = await handleExportToGitBook(docs);
           if (result?.data?.content && result.data.fileName && result.data.mimeType) {
             const { fileName, mimeType, content } = result.data;
@@ -248,23 +249,21 @@ export default function AutoDocifyClientPage() {
             document.body.appendChild(link);
             link.click();
             document.body.removeChild(link);
-            // For data URIs, no need to revokeObjectURL
-            toast({ title: "GitBook Export Ready", description: result.message || `Downloaded ${fileName}. You can now import it into GitBook.` });
+            toast({ title: "GitBook Export Ready", description: result.data.message || `Downloaded ${fileName}. You can now import it into GitBook.` });
           } else if (result?.error) {
             toast({ title: `GitBook Export Failed`, description: result.error, variant: "destructive" });
           } else {
-            toast({ title: `GitBook Export Status`, description: result?.message || "An issue occurred during export." });
+              toast({ title: `GitBook Export Status`, description: result?.message || "An issue occurred during export." });
           }
+        } catch (error: any) {
+          const errorMessage = error instanceof Error ? error.message : "An unexpected error occurred.";
+          console.error("Export Error:", error);
+          toast({ title: "Export Error", description: `An unexpected error occurred during GitBook export: ${errorMessage}`, variant: "destructive" });
         }
-      } catch (error: any) {
-        const errorMessage = error instanceof Error ? error.message : "An unexpected error occurred.";
-        console.error("Export Error:", error);
-        toast({ title: "Export Error", description: `An unexpected error occurred during ${exportType} export: ${errorMessage}`, variant: "destructive" });
-      } finally {
-        setCurrentExportType(null);
-      }
-    });
+      });
+    }
   };
+
 
   const docSectionsConfig = (uiMode: boolean): Array<{ id: keyof GenerateDocumentationOutput; title: string; icon: React.ElementType }> => {
     if (uiMode) {
@@ -315,7 +314,7 @@ export default function AutoDocifyClientPage() {
                         UI-Focused Documentation
                       </FormLabel>
                       <p className="text-sm text-muted-foreground">
-                        Enable to generate docs from a UI description or Figma/design tool link.
+                        Generate docs from a UI description or Figma/design tool link.
                       </p>
                     </div>
                     <FormControl>
@@ -443,7 +442,7 @@ export default function AutoDocifyClientPage() {
               <path d="M93.9676 39.0409C96.393 38.4038 97.8624 35.9116 97.0079 33.5539C95.2932 28.8227 92.871 24.3692 89.8167 20.348C85.8452 15.1192 80.8826 10.7238 75.2124 7.41289C69.5422 4.10194 63.2754 1.94025 56.7698 1.05124C51.7666 0.367541 46.6976 0.446843 41.7345 1.27873C39.2613 1.69328 37.813 4.19778 38.4501 6.62326C39.0873 9.04874 41.5694 10.4717 44.0505 10.1071C47.8511 9.54855 51.7191 9.52689 55.5402 10.0492C60.8642 10.7766 65.9928 12.5457 70.6331 15.2552C75.2735 17.9648 79.3347 21.5619 82.5849 25.841C84.9175 28.9121 86.7997 32.2913 88.1811 35.8758C89.083 38.2158 91.5421 39.6781 93.9676 39.0409Z" fill="currentFill" />
             </svg>
             <p className="mt-4 text-lg text-muted-foreground">
-              {isGenerating ? "Generating documentation..." : isRegenerating ? "Regenerating section..." : isExporting && currentExportType === 'gitbook' ? "Generating GitBook Zip..." : "Processing..."}
+              {isGenerating ? "Generating documentation..." : isRegenerating ? "Regenerating section..." : isExporting ? "Generating GitBook Zip..." : "Processing..."}
               This might take a moment.
             </p>
             <p className="text-sm text-muted-foreground">Please don't close this page.</p>
@@ -539,7 +538,7 @@ export default function AutoDocifyClientPage() {
                     <TooltipTrigger asChild>
                       <Button variant="outline" onClick={() => triggerExport('gitbook')} disabled={isExporting || isGenerating || isRegenerating}>
                         <Download className="mr-2 h-4 w-4" />
-                        {isExporting && currentExportType === 'gitbook' ? "Generating Zip..." : "Download GitBook .zip"}
+                        {isExporting ? "Generating Zip..." : "Download GitBook .zip"}
                       </Button>
                     </TooltipTrigger>
                     <TooltipContent>
@@ -624,3 +623,4 @@ export default function AutoDocifyClientPage() {
     </div>
   );
 }
+    
