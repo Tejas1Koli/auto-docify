@@ -2,11 +2,10 @@
 "use client";
 
 import type { GenerateDocumentationOutput } from '@/ai/flows/generate-documentation';
-import type { RegenerateDocumentationSectionOutput } from '@/ai/flows/regenerate-documentation-section';
-import type { ExportToGitBookOutput } from '@/ai/flows/export-to-gitbook-flow'; // Import new type
-import { handleGenerateDocs, handleRegenerateSection, handleExportToPDF, handleExportToNotion, handleExportToGitBook } from '@/lib/actions';
+import type { ExportToGitBookOutput } from '@/ai/flows/export-to-gitbook-flow';
+import { handleGenerateDocs, handleRegenerateSection, handleExportToGitBook } from '@/lib/actions';
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Rocket, UploadCloud, Link as LinkIcon, Wand2, ListChecks, FileCode2, BookUser, MessagesSquare, FileDown, GitBranch, RefreshCcw, Edit3, FileType2, Image as ImageIcon, Download } from 'lucide-react';
+import { Rocket, UploadCloud, Link as LinkIcon, Wand2, FileCode2, BookUser, MessagesSquare, FileDown, GitBranch, RefreshCcw, Edit3, FileType2, Image as ImageIcon, Download } from 'lucide-react';
 import Image from 'next/image';
 import React, { useState, useTransition } from 'react';
 import { useForm } from "react-hook-form";
@@ -37,12 +36,19 @@ const formSchema = z.object({
   if (data.uiOnlyMode) {
     return !!data.uiDescription && data.uiDescription.trim() !== "";
   }
+  // If not uiOnlyMode, then either URL or File must be provided based on inputType
   if (data.inputType === "url") return !!data.githubUrl && data.githubUrl.trim() !== "";
-  if (data.inputType === "file") return !!data.codeFile && data.codeFile[0];
-  return false;
+  if (data.inputType === "file") return !!data.codeFile && data.codeFile[0]; // Check if file is present
+  return false; // Fallback, should be caught by specific checks
 }, {
-  message: "Input is required. For UI-Only mode, provide a UI description or link. For code mode, provide a GitHub URL or .zip file.",
-  path: ["inputType"], 
+  message: "Input is required. For UI-Only mode, provide a UI description. For code mode, provide a GitHub URL or .zip file.",
+  path: ["uiDescription"], // Specific path helps focus error message
+}).refine(data => data.uiOnlyMode || (data.inputType === "url" ? !!data.githubUrl && data.githubUrl.trim() !== "" : true), {
+  message: "GitHub URL is required when input type is URL and not in UI-Only mode.",
+  path: ["githubUrl"],
+}).refine(data => data.uiOnlyMode || (data.inputType === "file" ? !!data.codeFile && data.codeFile[0] : true), {
+  message: "A .zip file is required when input type is file and not in UI-Only mode.",
+  path: ["codeFile"],
 });
 
 type FormValues = z.infer<typeof formSchema>;
@@ -75,6 +81,7 @@ export default function AutoDocifyClientPage() {
   const [showRegenerateDialog, setShowRegenerateDialog] = useState(false);
   const [editingSection, setEditingSection] = useState<{ name: keyof GenerateDocumentationOutput, content: string } | null>(null);
   const [tempEditedContent, setTempEditedContent] = useState<string>("");
+  const [currentExportType, setCurrentExportType] = useState<'pdf' | 'notion' | 'gitbook' | null>(null);
 
   const { toast } = useToast();
 
@@ -91,7 +98,7 @@ export default function AutoDocifyClientPage() {
   const regenerationForm = useForm<RegenerationFormValues>({
     resolver: zodResolver(regenerationSchema),
   });
-  
+
   const handleEditSection = (sectionName: keyof GenerateDocumentationOutput, currentContent: string) => {
     setEditingSection({ name: sectionName, content: currentContent });
     setTempEditedContent(currentContent);
@@ -112,20 +119,16 @@ export default function AutoDocifyClientPage() {
     if (values.uiOnlyMode) {
         generationInputString = values.uiDescription || "";
          if (!generationInputString) {
-            toast({title: "Input Error", description: "For UI-Only mode, please provide a UI description or a Figma/design tool link.", variant: "destructive"});
+            form.setError("uiDescription", { type: "manual", message: "UI description or Figma link is required for UI-Only mode." });
             return;
         }
-        toast({
-            title: "UI-Only Mode Activated",
-            description: "Generating documentation based on your UI description/link.",
-        });
-    } else { 
+    } else {
         if (values.inputType === "url" && values.githubUrl) {
             generationInputString = values.githubUrl;
         } else if (values.inputType === "file" && values.codeFile && values.codeFile[0]) {
             const file = values.codeFile[0];
             if (file.type !== "application/zip" && !file.name.endsWith('.zip')) {
-                toast({ title: "Invalid File Type", description: "Please upload a .zip file for codebase analysis.", variant: "destructive" });
+                form.setError("codeFile", { type: "manual", message: "Please upload a .zip file for codebase analysis." });
                 return;
             }
             try {
@@ -135,12 +138,13 @@ export default function AutoDocifyClientPage() {
                 return;
             }
         } else {
-            toast({ title: "Input Error", description: "Please provide a GitHub URL or upload a .zip file for code documentation.", variant: "destructive" });
+            // This block should ideally not be reached if zod refinement is correct
+            toast({ title: "Input Error", description: "Please provide the necessary input for documentation.", variant: "destructive" });
             return;
         }
     }
 
-    setCurrentCodebaseInputForRegen(generationInputString); 
+    setCurrentCodebaseInputForRegen(generationInputString);
     setCurrentUiOnlyModeForRegen(values.uiOnlyMode);
     setDocs(null);
 
@@ -164,7 +168,7 @@ export default function AutoDocifyClientPage() {
       toast({ title: "Error", description: "No codebase context found for regeneration.", variant: "destructive" });
       return;
     }
-    if (!docs) {
+    if (!docs) { // Should not happen if regenerate button is only visible with docs
          toast({ title: "Error", description: "No existing documentation to regenerate from.", variant: "destructive" });
          return;
     }
@@ -175,7 +179,7 @@ export default function AutoDocifyClientPage() {
           currentCodebaseInputForRegen,
           values.sectionName,
           values.tone,
-          currentUiOnlyModeForRegen 
+          currentUiOnlyModeForRegen // Pass UI mode context
         );
         if (result.error) {
           toast({ title: "Regeneration Failed", description: result.error, variant: "destructive" });
@@ -202,7 +206,7 @@ export default function AutoDocifyClientPage() {
       reader.readAsDataURL(file);
     });
   };
-  
+
   const handleDownloadMarkdown = (content: string, filename: string) => {
     const blob = new Blob([content], { type: 'text/markdown;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
@@ -217,49 +221,55 @@ export default function AutoDocifyClientPage() {
   };
 
   const triggerExport = async (exportType: 'pdf' | 'notion' | 'gitbook') => {
-    if (!docs) {
-      toast({ title: "No Docs", description: "Please generate documentation first.", variant: "destructive" });
+    if (exportType === 'pdf') {
+      toast({ title: "PDF Export (Coming Soon!)", description: "Full PDF export functionality is under development."});
       return;
     }
+    if (exportType === 'notion') {
+      toast({ title: "Notion Export (Coming Soon!)", description: "Full Notion export functionality is under development."});
+      return;
+    }
+
+    // Only GitBook export will proceed from here
+    if (!docs) {
+      toast({ title: "No Docs", description: "Please generate documentation first to export to GitBook.", variant: "destructive" });
+      return;
+    }
+
+    setCurrentExportType('gitbook');
     startExportTransition(async () => {
       let result;
       try {
-        if (exportType === 'pdf') {
-          result = await handleExportToPDF(docs);
-        } else if (exportType === 'notion') {
-          result = await handleExportToNotion(docs);
-        } else if (exportType === 'gitbook') {
-          result = await handleExportToGitBook(docs);
-          if (result?.data?.content && result.data.fileName && result.data.mimeType) {
-            const { fileName, mimeType, content } = result.data;
-            const link = document.createElement('a');
-            link.href = `data:${mimeType};base64,${content}`;
-            link.download = fileName;
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
-            toast({ title: "GitBook Export Ready", description: `Downloaded ${fileName}. You can now import it into GitBook.` });
-            return; // Prevent further toast messages for this specific case
-          }
+        result = await handleExportToGitBook(docs!); // docs cannot be null here due to the check above
+        if (result?.data?.content && result.data.fileName && result.data.mimeType) {
+          const { fileName, mimeType, content } = result.data;
+          const link = document.createElement('a');
+          link.href = `data:${mimeType};base64,${content}`;
+          link.download = fileName;
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+          toast({ title: "GitBook Export Ready", description: `Downloaded ${fileName}. You can now import it into GitBook.` });
+        } else if (result?.error) {
+          toast({ title: `GitBook Export Failed`, description: result.error, variant: "destructive" });
+        } else if (result?.message) { // To handle messages from the flow
+           toast({ title: `GitBook Export Status`, description: result.message });
         }
-
-        if (result?.error) {
-          toast({ title: `${exportType.toUpperCase()} Export Failed`, description: result.error, variant: "destructive" });
-        } else if (result?.message) {
-          toast({ title: `${exportType.toUpperCase()} Export Status`, description: result.message });
-        }
-      } catch (error) {
-        toast({ title: "Export Error", description: `An unexpected error occurred during ${exportType} export.`, variant: "destructive" });
+      } catch (error: any) {
+        const errorMessage = error instanceof Error ? error.message : "An unexpected error occurred.";
+        toast({ title: "Export Error", description: `An unexpected error occurred during GitBook export: ${errorMessage}`, variant: "destructive" });
+      } finally {
+        setCurrentExportType(null);
       }
     });
   };
-  
+
   const docSectionsConfig = (uiMode: boolean): Array<{ id: keyof GenerateDocumentationOutput; title: string; icon: React.ElementType }> => {
     if (uiMode) {
       return [
-        { id: 'readme', title: 'UI Overview', icon: FileCode2 }, 
-        { id: 'apiDocs', title: 'Key Screens/Components', icon: GitBranch }, 
-        { id: 'userManual', title: 'User Flow Ideas', icon: BookUser }, 
+        { id: 'readme', title: 'UI Overview', icon: FileCode2 },
+        { id: 'apiDocs', title: 'Key Screens/Components', icon: GitBranch },
+        { id: 'userManual', title: 'User Flow Ideas', icon: BookUser },
         { id: 'faq', title: 'UI FAQ', icon: MessagesSquare },
       ];
     }
@@ -272,6 +282,7 @@ export default function AutoDocifyClientPage() {
   };
   const currentDocSections = docSectionsConfig(currentUiOnlyModeForRegen);
 
+  console.log("Preparing to render AutoDocifyClientPage component layout.");
 
   return (
     <div className="w-full max-w-4xl space-y-8">
@@ -373,10 +384,10 @@ export default function AutoDocifyClientPage() {
                                 <FormItem>
                                   <FormLabel>Upload .zip File</FormLabel>
                                   <FormControl>
-                                    <Input 
-                                      type="file" 
-                                      accept=".zip" 
-                                      onChange={(e) => fileField.onChange(e.target.files)} 
+                                    <Input
+                                      type="file"
+                                      accept=".zip"
+                                      onChange={(e) => fileField.onChange(e.target.files)}
                                       disabled={form.getValues("inputType") !== "file"}
                                       className="file:text-primary file:font-semibold file:bg-primary/10 hover:file:bg-primary/20"
                                     />
@@ -393,7 +404,7 @@ export default function AutoDocifyClientPage() {
                   )}
                 />
               )}
-              
+
               <div className="pt-4">
                 <h3 className="text-lg font-semibold mb-2">✅ What documentation will be generated?</h3>
                 <ul className="space-y-1 text-muted-foreground list-inside">
@@ -414,7 +425,7 @@ export default function AutoDocifyClientPage() {
                   )}
                 </ul>
               </div>
-              
+
               <Button type="submit" className="w-full text-lg py-6" disabled={isGenerating || isRegenerating || isExporting}>
                 <Wand2 className="mr-2 h-5 w-5" />
                 {isGenerating ? "Generating..." : "Generate Docs 🔥"}
@@ -432,7 +443,7 @@ export default function AutoDocifyClientPage() {
                   <path d="M93.9676 39.0409C96.393 38.4038 97.8624 35.9116 97.0079 33.5539C95.2932 28.8227 92.871 24.3692 89.8167 20.348C85.8452 15.1192 80.8826 10.7238 75.2124 7.41289C69.5422 4.10194 63.2754 1.94025 56.7698 1.05124C51.7666 0.367541 46.6976 0.446843 41.7345 1.27873C39.2613 1.69328 37.813 4.19778 38.4501 6.62326C39.0873 9.04874 41.5694 10.4717 44.0505 10.1071C47.8511 9.54855 51.7191 9.52689 55.5402 10.0492C60.8642 10.7766 65.9928 12.5457 70.6331 15.2552C75.2735 17.9648 79.3347 21.5619 82.5849 25.841C84.9175 28.9121 86.7997 32.2913 88.1811 35.8758C89.083 38.2158 91.5421 39.6781 93.9676 39.0409Z" fill="currentFill"/>
               </svg>
               <p className="mt-4 text-lg text-muted-foreground">
-                {isGenerating ? "Generating documentation..." : isRegenerating ? "Regenerating section..." : "Processing export..."}
+                {isGenerating ? "Generating documentation..." : isRegenerating ? "Regenerating section..." : isExporting && currentExportType === 'gitbook' ? "Generating GitBook Zip..." : "Processing..."}
                 This might take a moment.
               </p>
               <p className="text-sm text-muted-foreground">Please don't close this page.</p>
@@ -460,9 +471,9 @@ export default function AutoDocifyClientPage() {
                   {editingSection?.name === section.id ? (
                     <div className="space-y-4 p-4 border rounded-md">
                       <Label htmlFor={`edit-${section.id}`} className="text-lg font-semibold">Editing {section.title}</Label>
-                      <Textarea 
+                      <Textarea
                         id={`edit-${section.id}`}
-                        value={tempEditedContent} 
+                        value={tempEditedContent}
                         onChange={(e) => setTempEditedContent(e.target.value)}
                         rows={15}
                         className="w-full font-mono text-sm"
@@ -474,18 +485,18 @@ export default function AutoDocifyClientPage() {
                     </div>
                   ) : (
                     <>
-                      <Button 
-                        variant="ghost" 
-                        size="sm" 
+                      <Button
+                        variant="ghost"
+                        size="sm"
                         className="absolute top-0 right-0 m-1"
                         onClick={() => handleEditSection(section.id, docs[section.id])}
                       >
                         <Edit3 className="h-4 w-4 mr-1" /> Edit
                       </Button>
                       <MarkdownViewer content={docs[section.id]} />
-                       <Button 
-                        variant="outline" 
-                        size="sm" 
+                       <Button
+                        variant="outline"
+                        size="sm"
                         className="mt-4"
                         onClick={() => handleDownloadMarkdown(docs[section.id], `${section.id}.md`)}
                       >
@@ -502,11 +513,11 @@ export default function AutoDocifyClientPage() {
                   <CardTitle>Actions & Exports</CardTitle>
                   <CardDescription>Export your documentation to various platforms or download as individual files.</CardDescription>
                 </CardHeader>
-                <CardContent className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4"> 
+                <CardContent className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <Button variant="outline" onClick={() => triggerExport('pdf')} disabled={isExporting || isGenerating || isRegenerating}>
-                        <FileDown className="mr-2 h-4 w-4" />{isExporting ? "Exporting..." : "Download PDF"}
+                      <Button variant="outline" onClick={() => triggerExport('pdf')} disabled={true}>
+                        <FileDown className="mr-2 h-4 w-4" />Download PDF
                       </Button>
                     </TooltipTrigger>
                     <TooltipContent>
@@ -515,9 +526,9 @@ export default function AutoDocifyClientPage() {
                   </Tooltip>
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <Button variant="outline" onClick={() => triggerExport('notion')} disabled={isExporting || isGenerating || isRegenerating}>
+                      <Button variant="outline" onClick={() => triggerExport('notion')} disabled={true}>
                         <Image src="https://placehold.co/16x16.png" alt="Notion Logo" width={16} height={16} className="mr-2" data-ai-hint="Notion logo"/>
-                        {isExporting ? "Exporting..." : "Export to Notion"}
+                        Export to Notion
                       </Button>
                     </TooltipTrigger>
                     <TooltipContent>
@@ -527,8 +538,8 @@ export default function AutoDocifyClientPage() {
                   <Tooltip>
                     <TooltipTrigger asChild>
                        <Button variant="outline" onClick={() => triggerExport('gitbook')} disabled={isExporting || isGenerating || isRegenerating}>
-                        <Download className="mr-2 h-4 w-4" /> {/* Changed Icon */}
-                        {isExporting ? "Generating Zip..." : "Download GitBook .zip"}
+                        <Download className="mr-2 h-4 w-4" />
+                        {isExporting && currentExportType === 'gitbook' ? "Generating Zip..." : "Download GitBook .zip"}
                        </Button>
                     </TooltipTrigger>
                     <TooltipContent>
@@ -580,7 +591,7 @@ export default function AutoDocifyClientPage() {
                                   <FormControl>
                                     <SelectTrigger>
                                       <SelectValue placeholder="Select a tone" />
-                                    </SelectTrigger>
+                                    </Trigger>
                                   </FormControl>
                                   <SelectContent>
                                     <SelectItem value="developer-friendly">Developer-Friendly</SelectItem>
@@ -613,3 +624,5 @@ export default function AutoDocifyClientPage() {
     </div>
   );
 }
+
+    
