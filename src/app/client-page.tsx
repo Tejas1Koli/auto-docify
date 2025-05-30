@@ -2,7 +2,6 @@
 "use client";
 
 import type { GenerateDocumentationOutput } from '@/ai/flows/generate-documentation';
-import type { ExportToGitBookOutput } from '@/ai/flows/export-to-gitbook-flow.ts'; // Corrected import path if needed
 import { handleGenerateDocs, handleRegenerateSection, handleExportToGitBook } from '@/lib/actions';
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Rocket, UploadCloud, Link as LinkIcon, Wand2, FileCode2, BookUser, MessagesSquare, FileDown, GitBranch, RefreshCcw, Edit3, FileType2, Image as ImageIcon, Download } from 'lucide-react';
@@ -41,11 +40,11 @@ const formSchema = z.object({
   return false;
 }, {
   message: "Input is required. For UI-Only mode, provide a UI description. For code mode, provide a GitHub URL or .zip file.",
-  path: ["uiDescription"], 
-}).refine(data => data.uiOnlyMode || (data.inputType === "url" ? !!data.githubUrl && data.githubUrl.trim() !== "" : true), {
+  path: ["uiDescription"], // Path can be more general if needed, or specific to the first failing field
+}).refine(data => !data.uiOnlyMode && data.inputType === "url" ? !!data.githubUrl && data.githubUrl.trim() !== "" : true, {
   message: "GitHub URL is required when input type is URL and not in UI-Only mode.",
   path: ["githubUrl"],
-}).refine(data => data.uiOnlyMode || (data.inputType === "file" ? !!data.codeFile && data.codeFile.length > 0 && data.codeFile[0] : true), {
+}).refine(data => !data.uiOnlyMode && data.inputType === "file" ? !!data.codeFile && data.codeFile.length > 0 && data.codeFile[0] : true, {
   message: "A .zip file is required when input type is file and not in UI-Only mode.",
   path: ["codeFile"],
 });
@@ -116,37 +115,36 @@ export default function AutoDocifyClientPage() {
     let generationInputString = "";
 
     if (values.uiOnlyMode) {
-        generationInputString = values.uiDescription || "";
-         if (!generationInputString) {
-            form.setError("uiDescription", { type: "manual", message: "UI description or Figma link is required for UI-Only mode." });
-            return;
-        }
+      generationInputString = values.uiDescription || "";
+      if (!generationInputString) {
+        form.setError("uiDescription", { type: "manual", message: "UI description or Figma link is required for UI-Only mode." });
+        return;
+      }
     } else {
-        if (values.inputType === "url" && values.githubUrl) {
-            generationInputString = values.githubUrl;
-        } else if (values.inputType === "file" && values.codeFile && values.codeFile[0]) {
-            const file = values.codeFile[0];
-            if (file.type !== "application/zip" && !file.name.endsWith('.zip')) {
-                form.setError("codeFile", { type: "manual", message: "Please upload a .zip file for codebase analysis." });
-                return;
-            }
-            try {
-                generationInputString = await readFileAsDataURL(file);
-            } catch (error) {
-                console.error("File Read Error:", error);
-                toast({ title: "File Read Error", description: "Could not read the uploaded file.", variant: "destructive" });
-                return;
-            }
-        } else {
-             // This case should ideally be caught by form validation, but as a fallback:
-            toast({ title: "Input Error", description: "Please provide the necessary input for documentation.", variant: "destructive" });
-            return;
+      if (values.inputType === "url" && values.githubUrl) {
+        generationInputString = values.githubUrl;
+      } else if (values.inputType === "file" && values.codeFile && values.codeFile[0]) {
+        const file = values.codeFile[0];
+        if (file.type !== "application/zip" && !file.name.endsWith('.zip')) {
+          form.setError("codeFile", { type: "manual", message: "Please upload a .zip file for codebase analysis." });
+          return;
         }
+        try {
+          generationInputString = await readFileAsDataURL(file);
+        } catch (error) {
+          console.error("File Read Error:", error);
+          toast({ title: "File Read Error", description: "Could not read the uploaded file.", variant: "destructive" });
+          return;
+        }
+      } else {
+        toast({ title: "Input Error", description: "Please provide the necessary input for documentation.", variant: "destructive" });
+        return;
+      }
     }
 
     setCurrentCodebaseInputForRegen(generationInputString);
     setCurrentUiOnlyModeForRegen(values.uiOnlyMode);
-    setDocs(null); // Clear previous docs
+    setDocs(null);
 
     startGenerationTransition(async () => {
       try {
@@ -170,8 +168,8 @@ export default function AutoDocifyClientPage() {
       return;
     }
     if (!docs) {
-         toast({ title: "Error", description: "No existing documentation to regenerate from.", variant: "destructive" });
-         return;
+      toast({ title: "Error", description: "No existing documentation to regenerate from.", variant: "destructive" });
+      return;
     }
 
     startRegenerationTransition(async () => {
@@ -180,7 +178,7 @@ export default function AutoDocifyClientPage() {
           currentCodebaseInputForRegen,
           values.sectionName,
           values.tone,
-          currentUiOnlyModeForRegen
+          currentUiOnlyModeForRegen // Pass this flag
         );
         if (result.error) {
           toast({ title: "Regeneration Failed", description: result.error, variant: "destructive" });
@@ -224,43 +222,44 @@ export default function AutoDocifyClientPage() {
 
   const triggerExport = async (exportType: 'pdf' | 'notion' | 'gitbook') => {
     if (exportType === 'pdf') {
-      toast({ title: "PDF Export (Coming Soon!)", description: "Full PDF export functionality is under development."});
+      toast({ title: "PDF Export (Coming Soon!)", description: "Full PDF export functionality is under development." });
       return;
     }
     if (exportType === 'notion') {
-      toast({ title: "Notion Export (Coming Soon!)", description: "Full Notion export functionality is under development."});
+      toast({ title: "Notion Export (Coming Soon!)", description: "Full Notion export functionality is under development." });
       return;
     }
 
-    // GitBook export
     if (!docs) {
-      toast({ title: "No Docs", description: "Please generate documentation first to export to GitBook.", variant: "destructive" });
+      toast({ title: "No Docs", description: "Please generate documentation first to export.", variant: "destructive" });
       return;
     }
 
-    setCurrentExportType('gitbook');
+    setCurrentExportType(exportType);
     startExportTransition(async () => {
-      let result: { data?: ExportToGitBookOutput; error?: string; message?: string } | undefined;
       try {
-        result = await handleExportToGitBook(docs);
-        if (result?.data?.content && result.data.fileName && result.data.mimeType) {
-          const { fileName, mimeType, content } = result.data;
-          const link = document.createElement('a');
-          link.href = `data:${mimeType};base64,${content}`;
-          link.download = fileName;
-          document.body.appendChild(link);
-          link.click();
-          document.body.removeChild(link);
-          toast({ title: "GitBook Export Ready", description: `Downloaded ${fileName}. You can now import it into GitBook.` });
-        } else if (result?.error) {
-          toast({ title: `GitBook Export Failed`, description: result.error, variant: "destructive" });
-        } else if (result?.message) { // Catch-all for other messages from the flow
-           toast({ title: `GitBook Export Status`, description: result.message });
+        if (exportType === 'gitbook') {
+          const result = await handleExportToGitBook(docs);
+          if (result?.data?.content && result.data.fileName && result.data.mimeType) {
+            const { fileName, mimeType, content } = result.data;
+            const link = document.createElement('a');
+            link.href = `data:${mimeType};base64,${content}`;
+            link.download = fileName;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            // For data URIs, no need to revokeObjectURL
+            toast({ title: "GitBook Export Ready", description: result.message || `Downloaded ${fileName}. You can now import it into GitBook.` });
+          } else if (result?.error) {
+            toast({ title: `GitBook Export Failed`, description: result.error, variant: "destructive" });
+          } else {
+            toast({ title: `GitBook Export Status`, description: result?.message || "An issue occurred during export." });
+          }
         }
       } catch (error: any) {
         const errorMessage = error instanceof Error ? error.message : "An unexpected error occurred.";
         console.error("Export Error:", error);
-        toast({ title: "Export Error", description: `An unexpected error occurred during GitBook export: ${errorMessage}`, variant: "destructive" });
+        toast({ title: "Export Error", description: `An unexpected error occurred during ${exportType} export: ${errorMessage}`, variant: "destructive" });
       } finally {
         setCurrentExportType(null);
       }
@@ -439,15 +438,15 @@ export default function AutoDocifyClientPage() {
       {(isGenerating || isRegenerating || isExporting) && (
         <div className="text-center py-10">
           <div role="status" className="flex flex-col items-center">
-              <svg aria-hidden="true" className="w-12 h-12 text-gray-200 animate-spin dark:text-gray-600 fill-primary" viewBox="0 0 100 101" fill="none" xmlns="http://www.w3.org/2000/svg">
-                  <path d="M100 50.5908C100 78.2051 77.6142 100.591 50 100.591C22.3858 100.591 0 78.2051 0 50.5908C0 22.9766 22.3858 0.59082 50 0.59082C77.6142 0.59082 100 22.9766 100 50.5908ZM9.08144 50.5908C9.08144 73.1895 27.4013 91.5094 50 91.5094C72.5987 91.5094 90.9186 73.1895 90.9186 50.5908C90.9186 27.9921 72.5987 9.67226 50 9.67226C27.4013 9.67226 9.08144 27.9921 9.08144 50.5908Z" fill="currentColor"/>
-                  <path d="M93.9676 39.0409C96.393 38.4038 97.8624 35.9116 97.0079 33.5539C95.2932 28.8227 92.871 24.3692 89.8167 20.348C85.8452 15.1192 80.8826 10.7238 75.2124 7.41289C69.5422 4.10194 63.2754 1.94025 56.7698 1.05124C51.7666 0.367541 46.6976 0.446843 41.7345 1.27873C39.2613 1.69328 37.813 4.19778 38.4501 6.62326C39.0873 9.04874 41.5694 10.4717 44.0505 10.1071C47.8511 9.54855 51.7191 9.52689 55.5402 10.0492C60.8642 10.7766 65.9928 12.5457 70.6331 15.2552C75.2735 17.9648 79.3347 21.5619 82.5849 25.841C84.9175 28.9121 86.7997 32.2913 88.1811 35.8758C89.083 38.2158 91.5421 39.6781 93.9676 39.0409Z" fill="currentFill"/>
-              </svg>
-              <p className="mt-4 text-lg text-muted-foreground">
-                {isGenerating ? "Generating documentation..." : isRegenerating ? "Regenerating section..." : isExporting && currentExportType === 'gitbook' ? "Generating GitBook Zip..." : "Processing..."}
-                This might take a moment.
-              </p>
-              <p className="text-sm text-muted-foreground">Please don't close this page.</p>
+            <svg aria-hidden="true" className="w-12 h-12 text-gray-200 animate-spin dark:text-gray-600 fill-primary" viewBox="0 0 100 101" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M100 50.5908C100 78.2051 77.6142 100.591 50 100.591C22.3858 100.591 0 78.2051 0 50.5908C0 22.9766 22.3858 0.59082 50 0.59082C77.6142 0.59082 100 22.9766 100 50.5908ZM9.08144 50.5908C9.08144 73.1895 27.4013 91.5094 50 91.5094C72.5987 91.5094 90.9186 73.1895 90.9186 50.5908C90.9186 27.9921 72.5987 9.67226 50 9.67226C27.4013 9.67226 9.08144 27.9921 9.08144 50.5908Z" fill="currentColor" />
+              <path d="M93.9676 39.0409C96.393 38.4038 97.8624 35.9116 97.0079 33.5539C95.2932 28.8227 92.871 24.3692 89.8167 20.348C85.8452 15.1192 80.8826 10.7238 75.2124 7.41289C69.5422 4.10194 63.2754 1.94025 56.7698 1.05124C51.7666 0.367541 46.6976 0.446843 41.7345 1.27873C39.2613 1.69328 37.813 4.19778 38.4501 6.62326C39.0873 9.04874 41.5694 10.4717 44.0505 10.1071C47.8511 9.54855 51.7191 9.52689 55.5402 10.0492C60.8642 10.7766 65.9928 12.5457 70.6331 15.2552C75.2735 17.9648 79.3347 21.5619 82.5849 25.841C84.9175 28.9121 86.7997 32.2913 88.1811 35.8758C89.083 38.2158 91.5421 39.6781 93.9676 39.0409Z" fill="currentFill" />
+            </svg>
+            <p className="mt-4 text-lg text-muted-foreground">
+              {isGenerating ? "Generating documentation..." : isRegenerating ? "Regenerating section..." : isExporting && currentExportType === 'gitbook' ? "Generating GitBook Zip..." : "Processing..."}
+              This might take a moment.
+            </p>
+            <p className="text-sm text-muted-foreground">Please don't close this page.</p>
           </div>
         </div>
       )}
@@ -495,7 +494,7 @@ export default function AutoDocifyClientPage() {
                         <Edit3 className="h-4 w-4 mr-1" /> Edit
                       </Button>
                       <MarkdownViewer content={docs[section.id]} />
-                       <Button
+                      <Button
                         variant="outline"
                         size="sm"
                         className="mt-4"
@@ -528,7 +527,7 @@ export default function AutoDocifyClientPage() {
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <Button variant="outline" onClick={() => triggerExport('notion')} disabled={true}>
-                        <Image src="https://placehold.co/16x16.png" alt="Notion Logo" width={16} height={16} className="mr-2" data-ai-hint="Notion logo"/>
+                        <Image src="https://placehold.co/16x16.png" alt="Notion Logo" width={16} height={16} className="mr-2" data-ai-hint="Notion logo" />
                         Export to Notion
                       </Button>
                     </TooltipTrigger>
@@ -538,10 +537,10 @@ export default function AutoDocifyClientPage() {
                   </Tooltip>
                   <Tooltip>
                     <TooltipTrigger asChild>
-                       <Button variant="outline" onClick={() => triggerExport('gitbook')} disabled={isExporting || isGenerating || isRegenerating}>
+                      <Button variant="outline" onClick={() => triggerExport('gitbook')} disabled={isExporting || isGenerating || isRegenerating}>
                         <Download className="mr-2 h-4 w-4" />
                         {isExporting && currentExportType === 'gitbook' ? "Generating Zip..." : "Download GitBook .zip"}
-                       </Button>
+                      </Button>
                     </TooltipTrigger>
                     <TooltipContent>
                       <p>Download a .zip file with markdown docs, ready for GitBook import.</p>
@@ -574,7 +573,7 @@ export default function AutoDocifyClientPage() {
                                   </FormControl>
                                   <SelectContent>
                                     {currentDocSections.map(s => (
-                                       <SelectItem key={s.id} value={s.id}>{s.title}</SelectItem>
+                                      <SelectItem key={s.id} value={s.id}>{s.title}</SelectItem>
                                     ))}
                                   </SelectContent>
                                 </Select>
@@ -625,5 +624,3 @@ export default function AutoDocifyClientPage() {
     </div>
   );
 }
-
-    
