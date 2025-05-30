@@ -1,10 +1,11 @@
+
 "use client";
 
 import type { GenerateDocumentationOutput } from '@/ai/flows/generate-documentation';
 import type { RegenerateDocumentationSectionOutput } from '@/ai/flows/regenerate-documentation-section';
 import { handleGenerateDocs, handleRegenerateSection } from '@/lib/actions';
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Rocket, UploadCloud, Link as LinkIcon, Wand2, ListChecks, FileCode2, BookUser, MessagesSquare, FileDown, GitBranch, RefreshCcw, Edit3, FileType2 } from 'lucide-react';
+import { Rocket, UploadCloud, Link as LinkIcon, Wand2, ListChecks, FileCode2, BookUser, MessagesSquare, FileDown, GitBranch, RefreshCcw, Edit3, FileType2, Image as ImageIcon } from 'lucide-react';
 import Image from 'next/image';
 import React, { useState, useTransition } from 'react';
 import { useForm } from "react-hook-form";
@@ -22,21 +23,30 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from '@/components/ui/textarea';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { useToast } from "@/hooks/use-toast";
 
 // Define Zod schema for form validation
 const formSchema = z.object({
   inputType: z.enum(["url", "file"], { required_error: "Please select an input type" }),
   githubUrl: z.string().optional(),
-  codeFile: z.any().optional(),
+  codeFile: z.any().optional(), // Can be FileList or undefined
   uiOnlyMode: z.boolean().default(false),
 }).refine(data => {
-  if (data.inputType === "url") return !!data.githubUrl && data.githubUrl.trim() !== "";
-  if (data.inputType === "file") return !!data.codeFile && data.codeFile.length > 0;
-  return false;
+  if (data.uiOnlyMode) {
+    return true; // If UI-Only mode, code input is optional, so this cross-field validation passes.
+  }
+  // If not UI-Only mode, code input is mandatory based on inputType.
+  if (data.inputType === "url") {
+    return !!data.githubUrl && data.githubUrl.trim() !== "";
+  }
+  if (data.inputType === "file") {
+    return !!data.codeFile && data.codeFile[0]; // Check if FileList is present and has at least one file
+  }
+  return false; // Should not be reached if inputType is always one of the enum values
 }, {
-  message: "Please provide a GitHub URL or upload a .zip file.",
-  path: ["githubUrl"], // You can refine path to be more specific
+  message: "A GitHub URL or a .zip file is required when not in UI-Only mode.",
+  path: ["inputType"], // Show error near the input type selector
 });
 
 type FormValues = z.infer<typeof formSchema>;
@@ -44,14 +54,14 @@ type FormValues = z.infer<typeof formSchema>;
 const regenerationSchema = z.object({
   sectionName: z.string({ required_error: "Please select a section." }),
   tone: z.string({ required_error: "Please select a tone." }),
-  customPrompt: z.string().optional(), // For potential inline editing later
+  customPrompt: z.string().optional(),
 });
 type RegenerationFormValues = z.infer<typeof regenerationSchema>;
 
 
 const MarkdownViewer: React.FC<{ content: string }> = ({ content }) => {
   return (
-    <div className="markdown-content p-4 rounded-md bg-card prose prose-sm max-w-none" data-ai-hint="markdown rendered content">
+    <div className="markdown-content p-4 rounded-md bg-card prose prose-sm max-w-none dark:prose-invert" data-ai-hint="markdown rendered content">
       <ReactMarkdown remarkPlugins={[remarkGfm]}>
         {content || "No content available."}
       </ReactMarkdown>
@@ -87,13 +97,13 @@ export default function AutoDocifyClientPage() {
 
   const handleEditSection = (sectionName: keyof GenerateDocumentationOutput, currentContent: string) => {
     setEditingSection({ name: sectionName, content: currentContent });
-    setTempEditedContent(currentContent); // Initialize textarea with current content
+    setTempEditedContent(currentContent);
   };
 
   const handleSaveEdit = () => {
     if (editingSection && docs) {
       const updatedDocs = { ...docs, [editingSection.name]: tempEditedContent };
-      setDocs(updatedDocs as GenerateDocumentationOutput); // Cast needed as we are sure about the structure
+      setDocs(updatedDocs as GenerateDocumentationOutput);
       setEditingSection(null);
       toast({ title: "Section Updated", description: `${editingSection.name} has been updated locally.` });
     }
@@ -103,6 +113,29 @@ export default function AutoDocifyClientPage() {
   const onSubmit = async (values: FormValues) => {
     let codebaseInput = "";
 
+    if (values.uiOnlyMode) {
+      const codeProvidedViaUrl = values.inputType === "url" && values.githubUrl && values.githubUrl.trim() !== "";
+      const codeProvidedViaFile = values.inputType === "file" && values.codeFile && values.codeFile[0];
+
+      if (!codeProvidedViaUrl && !codeProvidedViaFile) {
+        // Pure UI-Only mode (no code accompanying it)
+        toast({
+          title: "UI-Only Mode (Conceptual)",
+          description: "Figma/UI analysis feature is enabled. Full functionality is under development and will use a dedicated AI flow.",
+        });
+        setCurrentCodebaseInput(''); 
+        setDocs(null); 
+        return; 
+      }
+      // If code IS provided alongside UI-Only mode, we'll use that code.
+      // The uiOnlyMode flag will be passed to handleGenerateDocs.
+      toast({
+          title: "UI-Only Mode with Code Input",
+          description: "Generating documentation for the provided code, with UI-Only mode activated. Full UI analysis integration is under development.",
+      });
+    }
+
+    // Populate codebaseInput if code is provided
     if (values.inputType === "url" && values.githubUrl) {
       codebaseInput = values.githubUrl;
     } else if (values.inputType === "file" && values.codeFile && values.codeFile[0]) {
@@ -118,12 +151,16 @@ export default function AutoDocifyClientPage() {
         return;
       }
     } else {
-      toast({ title: "Input Error", description: "Please provide a valid input.", variant: "destructive" });
+      // This condition should ideally not be met if uiOnlyMode without code input returned early,
+      // or if !uiOnlyMode and form validation caught missing input.
+      if (!values.uiOnlyMode) { // Only show error if not in UI-Only mode (as UI-Only without code is handled)
+        toast({ title: "Input Error", description: "Please provide a valid code input.", variant: "destructive" });
+      }
       return;
     }
 
-    setCurrentCodebaseInput(codebaseInput); // Save for regeneration
-    setDocs(null); // Clear previous docs
+    setCurrentCodebaseInput(codebaseInput);
+    setDocs(null);
 
     startTransition(async () => {
       try {
@@ -139,6 +176,7 @@ export default function AutoDocifyClientPage() {
       }
     });
   };
+
 
   const onRegenerateSubmit = async (values: RegenerationFormValues) => {
     if (!currentCodebaseInput) {
@@ -196,6 +234,13 @@ export default function AutoDocifyClientPage() {
     URL.revokeObjectURL(url);
   };
 
+  const showComingSoonToast = (featureName: string) => {
+    toast({
+      title: "Feature Coming Soon!",
+      description: `${featureName} functionality is under development and will be available soon.`,
+    });
+  };
+
 
   const docSections: Array<{ id: keyof GenerateDocumentationOutput; title: string; icon: React.ElementType }> = [
     { id: 'readme', title: 'README.md', icon: FileCode2 },
@@ -219,7 +264,7 @@ export default function AutoDocifyClientPage() {
       <Card className="shadow-xl">
         <CardHeader>
           <CardTitle className="text-2xl">Get Started</CardTitle>
-          <CardDescription>Provide your codebase via GitHub URL or .zip file.</CardDescription>
+          <CardDescription>Provide your codebase via GitHub URL or .zip file. You can also enable UI-Only mode for Figma/UI analysis.</CardDescription>
         </CardHeader>
         <CardContent>
           <Form {...form}>
@@ -229,7 +274,7 @@ export default function AutoDocifyClientPage() {
                 name="inputType"
                 render={({ field }) => (
                   <FormItem className="space-y-3">
-                    <FormLabel>Input Method</FormLabel>
+                    <FormLabel>Input Method for Codebase (Optional if UI-Only)</FormLabel>
                     <FormControl>
                        <Tabs defaultValue="url" onValueChange={(value) => field.onChange(value as "url" | "file")} className="w-full">
                         <TabsList className="grid w-full grid-cols-2">
@@ -274,7 +319,7 @@ export default function AutoDocifyClientPage() {
                         </TabsContent>
                       </Tabs>
                     </FormControl>
-                    <FormMessage />
+                    <FormMessage /> {/* For the inputType field itself, e.g., if refine fails */}
                   </FormItem>
                 )}
               />
@@ -286,17 +331,17 @@ export default function AutoDocifyClientPage() {
                   <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
                     <div className="space-y-0.5">
                       <FormLabel className="text-base">
-                        UI-Only Mode
+                        <ImageIcon className="inline-block mr-2 h-5 w-5 text-primary" />
+                        UI-Only Mode (e.g., Figma)
                       </FormLabel>
                       <p className="text-sm text-muted-foreground">
-                        Analyze UI components (e.g., Figma files). Currently conceptual.
+                        Enable analysis of UI designs (e.g., Figma links). Code input above becomes optional. Feature under active development.
                       </p>
                     </div>
                     <FormControl>
                       <Switch
                         checked={field.value}
                         onCheckedChange={field.onChange}
-                        disabled // Conceptual feature
                       />
                     </FormControl>
                   </FormItem>
@@ -391,88 +436,112 @@ export default function AutoDocifyClientPage() {
                 </TabsContent>
               ))}
             </Tabs>
-
-            <Card className="mt-8 bg-secondary/50">
-              <CardHeader>
-                <CardTitle>Actions</CardTitle>
-              </CardHeader>
-              <CardContent className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
-                <Button variant="outline" disabled><FileDown className="mr-2 h-4 w-4" />Download PDF</Button>
-                <Button variant="outline" disabled><Image src="https://placehold.co/16x16.png" alt="Notion Logo" width={16} height={16} className="mr-2" data-ai-hint="Notion logo"/>Export to Notion</Button>
-                <Button variant="outline" disabled><Image src="https://placehold.co/16x16.png" alt="GitBook Logo" width={16} height={16} className="mr-2" data-ai-hint="GitBook logo"/>Export to GitBook</Button>
-                <Dialog open={showRegenerateDialog} onOpenChange={setShowRegenerateDialog}>
-                  <DialogTrigger asChild>
-                    <Button><RefreshCcw className="mr-2 h-4 w-4" />Regenerate Section</Button>
-                  </DialogTrigger>
-                  <DialogContent>
-                    <DialogHeader>
-                      <DialogTitle>Regenerate Documentation Section</DialogTitle>
-                      <DialogDescription>
-                        Choose a section and tone to regenerate with AI.
-                      </DialogDescription>
-                    </DialogHeader>
-                    <Form {...regenerationForm}>
-                      <form onSubmit={regenerationForm.handleSubmit(onRegenerateSubmit)} className="space-y-4">
-                        <FormField
-                          control={regenerationForm.control}
-                          name="sectionName"
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel>Section to Regenerate</FormLabel>
-                              <Select onValueChange={field.onChange} defaultValue={field.value}>
-                                <FormControl>
-                                  <SelectTrigger>
-                                    <SelectValue placeholder="Select a section" />
-                                  </SelectTrigger>
-                                </FormControl>
-                                <SelectContent>
-                                  {docSections.map(s => (
-                                     <SelectItem key={s.id} value={s.id}>{s.title}</SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
-                        <FormField
-                          control={regenerationForm.control}
-                          name="tone"
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel>Tone</FormLabel>
-                              <Select onValueChange={field.onChange} defaultValue={field.value}>
-                                <FormControl>
-                                  <SelectTrigger>
-                                    <SelectValue placeholder="Select a tone" />
-                                  </SelectTrigger>
-                                </FormControl>
-                                <SelectContent>
-                                  <SelectItem value="developer-friendly">Developer-Friendly</SelectItem>
-                                  <SelectItem value="business-friendly">Business-Friendly</SelectItem>
-                                  <SelectItem value="formal">Formal</SelectItem>
-                                  <SelectItem value="casual">Casual</SelectItem>
-                                </SelectContent>
-                              </Select>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
-                        <DialogFooter>
-                          <Button type="button" variant="outline" onClick={() => setShowRegenerateDialog(false)}>Cancel</Button>
-                          <Button type="submit" disabled={isPending}>
-                            {isPending ? "Regenerating..." : "Regenerate"}
-                          </Button>
-                        </DialogFooter>
-                      </form>
-                    </Form>
-                  </DialogContent>
-                </Dialog>
-              </CardContent>
-            </Card>
+            <TooltipProvider>
+              <Card className="mt-8 bg-secondary/50">
+                <CardHeader>
+                  <CardTitle>Actions & Exports</CardTitle>
+                  <CardDescription>More export options and integrations are coming soon!</CardDescription>
+                </CardHeader>
+                <CardContent className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button variant="outline" onClick={() => showComingSoonToast("PDF Export")}><FileDown className="mr-2 h-4 w-4" />Download PDF</Button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p>Export documentation as a PDF file. (Coming Soon!)</p>
+                    </TooltipContent>
+                  </Tooltip>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button variant="outline" onClick={() => showComingSoonToast("Notion Export")}><Image src="https://placehold.co/16x16.png" alt="Notion Logo" width={16} height={16} className="mr-2" data-ai-hint="Notion logo"/>Export to Notion</Button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p>Send your documentation directly to a Notion page. (Coming Soon!)</p>
+                    </TooltipContent>
+                  </Tooltip>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                       <Button variant="outline" onClick={() => showComingSoonToast("GitBook Export")}><Image src="https://placehold.co/16x16.png" alt="GitBook Logo" width={16} height={16} className="mr-2" data-ai-hint="GitBook logo"/>Export to GitBook</Button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p>Publish your documentation to GitBook. (Coming Soon!)</p>
+                    </TooltipContent>
+                  </Tooltip>
+                  <Dialog open={showRegenerateDialog} onOpenChange={setShowRegenerateDialog}>
+                    <DialogTrigger asChild>
+                      <Button><RefreshCcw className="mr-2 h-4 w-4" />Regenerate Section</Button>
+                    </DialogTrigger>
+                    <DialogContent>
+                      <DialogHeader>
+                        <DialogTitle>Regenerate Documentation Section</DialogTitle>
+                        <DialogDescription>
+                          Choose a section and tone to regenerate with AI.
+                        </DialogDescription>
+                      </DialogHeader>
+                      <Form {...regenerationForm}>
+                        <form onSubmit={regenerationForm.handleSubmit(onRegenerateSubmit)} className="space-y-4">
+                          <FormField
+                            control={regenerationForm.control}
+                            name="sectionName"
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel>Section to Regenerate</FormLabel>
+                                <Select onValueChange={field.onChange} defaultValue={field.value}>
+                                  <FormControl>
+                                    <SelectTrigger>
+                                      <SelectValue placeholder="Select a section" />
+                                    </SelectTrigger>
+                                  </FormControl>
+                                  <SelectContent>
+                                    {docSections.map(s => (
+                                       <SelectItem key={s.id} value={s.id}>{s.title}</SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+                          <FormField
+                            control={regenerationForm.control}
+                            name="tone"
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel>Tone</FormLabel>
+                                <Select onValueChange={field.onChange} defaultValue={field.value}>
+                                  <FormControl>
+                                    <SelectTrigger>
+                                      <SelectValue placeholder="Select a tone" />
+                                    </SelectTrigger>
+                                  </FormControl>
+                                  <SelectContent>
+                                    <SelectItem value="developer-friendly">Developer-Friendly</SelectItem>
+                                    <SelectItem value="business-friendly">Business-Friendly</SelectItem>
+                                    <SelectItem value="formal">Formal</SelectItem>
+                                    <SelectItem value="casual">Casual</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+                          <DialogFooter>
+                            <Button type="button" variant="outline" onClick={() => setShowRegenerateDialog(false)}>Cancel</Button>
+                            <Button type="submit" disabled={isPending}>
+                              {isPending ? "Regenerating..." : "Regenerate"}
+                            </Button>
+                          </DialogFooter>
+                        </form>
+                      </Form>
+                    </DialogContent>
+                  </Dialog>
+                </CardContent>
+              </Card>
+            </TooltipProvider>
           </CardContent>
         </Card>
       )}
     </div>
   );
 }
+
