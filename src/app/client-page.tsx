@@ -1,11 +1,9 @@
-
 "use client";
 
 import type { GenerateDocumentationOutput } from '@/ai/flows/generate-documentation';
 import { handleExportToGitBook, handleGenerateDocs, handleRegenerateSection } from '@/lib/actions';
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Download, Edit3, FileCode2, FileText, GitBranch, Loader2, MessagesSquare, NotebookText, Rocket, Save, Send, BookUser, X } from 'lucide-react';
-import Image from 'next/image';
 import React, { useState, useTransition } from 'react';
 import { useForm } from "react-hook-form";
 import ReactMarkdown from 'react-markdown';
@@ -36,9 +34,8 @@ const MarkdownViewer: React.FC<{ content: string }> = ({ content }) => {
 };
 
 const formSchema = z.object({
-  inputMethod: z.enum(["url", "file", "text"]),
+  inputMethod: z.enum(["url", "text"]),
   codebaseInput: z.string().optional(), // URL or Text input
-  codebaseFile: z.instanceof(File).optional().nullable(), // File input, allow null for clearing
   uiOnlyMode: z.boolean().default(false),
   uiDescription: z.string().optional(),
 }).superRefine((data, ctx) => {
@@ -58,32 +55,11 @@ const formSchema = z.object({
         path: ["codebaseInput"],
       });
     }
-    if (data.inputMethod === "file" && !data.codebaseFile) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "Please select a .zip file for codebase input.",
-        path: ["codebaseFile"],
-      });
-    }
-    if (data.inputMethod === "file" && data.codebaseFile && data.codebaseFile.type !== "application/zip" && data.codebaseFile.type !== "application/x-zip-compressed") {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "Invalid file type. Please upload a .zip file.",
-        path: ["codebaseFile"],
-      });
-    }
     if (data.inputMethod === "text" && (!data.codebaseInput || data.codebaseInput.trim().length < 50)) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message: "Please paste a substantial code snippet (at least 50 characters).",
         path: ["codebaseInput"],
-      });
-    }
-    if (!data.inputMethod && !data.uiOnlyMode) {
-       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "Please select an input method for the codebase.",
-        path: ["inputMethod"], 
       });
     }
   }
@@ -122,7 +98,6 @@ export default function AutoDocifyClientPage() {
     defaultValues: {
       inputMethod: "url",
       codebaseInput: "",
-      codebaseFile: null,
       uiOnlyMode: false,
       uiDescription: "",
     },
@@ -135,54 +110,34 @@ export default function AutoDocifyClientPage() {
     }
   });
 
-  const readFileAsDataURL = (file: File): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result as string);
-      reader.onerror = (error) => reject(error);
-      reader.readAsDataURL(file);
-    });
-  };
-
   const onSubmit = async (values: FormValues) => {
     let codebaseInputValue = "";
     let uiOnlyModeValue = values.uiOnlyMode;
     setCurrentUiOnlyMode(uiOnlyModeValue);
-
     if (uiOnlyModeValue) {
-        if (!values.uiDescription || values.uiDescription.trim() === "") {
-            form.setError("uiDescription", { type: "manual", message: "UI description or Figma link is required." });
-            return;
-        }
-        codebaseInputValue = values.uiDescription;
+      if (!values.uiDescription || values.uiDescription.trim() === "") {
+        form.setError("uiDescription", { type: "manual", message: "UI description or Figma link is required." });
+        return;
+      }
+      codebaseInputValue = values.uiDescription;
     } else {
-        if (values.inputMethod === "file" && values.codebaseFile) {
-            try {
-                codebaseInputValue = await readFileAsDataURL(values.codebaseFile);
-            } catch (error) {
-                console.error("Error reading file:", error);
-                toast({ title: "File Read Error", description: "Could not read the uploaded file.", variant: "destructive" });
-                return;
-            }
-        } else if (values.inputMethod === "url" || values.inputMethod === "text") {
-            if (!values.codebaseInput || values.codebaseInput.trim() === "") {
-                let message = "Input required.";
-                if (values.inputMethod === "url") message = "GitHub URL is required.";
-                if (values.inputMethod === "text") message = "Pasted code is required.";
-                form.setError("codebaseInput", { type: "manual", message });
-                return;
-            }
-            codebaseInputValue = values.codebaseInput;
-        } else {
-            toast({ title: "Input Method Error", description: "Please select a valid input method for the codebase.", variant: "destructive" });
-            return;
+      if (values.inputMethod === "url" || values.inputMethod === "text") {
+        if (!values.codebaseInput || values.codebaseInput.trim() === "") {
+          let message = "Input required.";
+          if (values.inputMethod === "url") message = "GitHub URL is required.";
+          if (values.inputMethod === "text") message = "Pasted code is required.";
+          form.setError("codebaseInput", { type: "manual", message });
+          return;
         }
+        codebaseInputValue = values.codebaseInput;
+      } else {
+        toast({ title: "Input Method Error", description: "Please select a valid input method for the codebase.", variant: "destructive" });
+        return;
+      }
     }
-    
     setOriginalCodebaseInputForRegen(codebaseInputValue);
     setOriginalUiOnlyModeForRegen(uiOnlyModeValue);
     setDocs(null);
-
     startGenerationTransition(async () => {
       try {
         const result = await handleGenerateDocs(codebaseInputValue, uiOnlyModeValue);
@@ -318,7 +273,7 @@ export default function AutoDocifyClientPage() {
           <Card className="shadow-xl">
             <CardHeader>
               <CardTitle className="text-2xl">Input Your Codebase or UI</CardTitle>
-              <CardDescription>Provide a GitHub URL, upload a .zip, paste code, or describe your UI.</CardDescription>
+              <CardDescription>Provide a GitHub URL, paste code, or describe your UI.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <FormField
@@ -370,9 +325,7 @@ export default function AutoDocifyClientPage() {
                         variant={form.watch("inputMethod") === "url" ? "default" : "outline"}
                         onClick={() => {
                           form.setValue("inputMethod", "url", { shouldValidate: true });
-                          form.setValue("codebaseFile", null);
-                          form.setValue("codebaseInput", form.getValues("inputMethod") === "url" ? form.getValues("codebaseInput") : ""); 
-                          form.clearErrors("codebaseFile");
+                          form.setValue("codebaseInput", form.getValues("inputMethod") === "url" ? form.getValues("codebaseInput") : "");
                         }}
                         className="flex-1"
                       >
@@ -380,31 +333,17 @@ export default function AutoDocifyClientPage() {
                       </Button>
                       <Button
                         type="button"
-                        variant={form.watch("inputMethod") === "file" ? "default" : "outline"}
-                        onClick={() => {
-                          form.setValue("inputMethod", "file", { shouldValidate: true });
-                          form.setValue("codebaseInput", "");
-                           form.clearErrors("codebaseInput");
-                        }}
-                        className="flex-1"
-                      >
-                        Upload .zip
-                      </Button>
-                      <Button
-                        type="button"
                         variant={form.watch("inputMethod") === "text" ? "default" : "outline"}
                         onClick={() => {
                           form.setValue("inputMethod", "text", { shouldValidate: true });
-                          form.setValue("codebaseFile", null);
                           form.setValue("codebaseInput", form.getValues("inputMethod") === "text" ? form.getValues("codebaseInput") : "");
-                           form.clearErrors("codebaseFile");
                         }}
                         className="flex-1"
                       >
                         Paste Code
                       </Button>
                     </div>
-                     <FormMessage>{form.formState.errors.inputMethod?.message}</FormMessage>
+                    <FormMessage>{form.formState.errors.inputMethod?.message}</FormMessage>
                   </FormItem>
 
                   {form.watch("inputMethod") === "url" && (
@@ -422,30 +361,6 @@ export default function AutoDocifyClientPage() {
                       )}
                     />
                   )}
-                  {form.watch("inputMethod") === "file" && (
-                    <FormField
-                      control={form.control}
-                      name="codebaseFile"
-                      render={({ field: { onChange, value, ...restField } }) => ( 
-                        <FormItem>
-                          <FormLabel>Upload Codebase (.zip)</FormLabel>
-                          <FormControl>
-                            <Input
-                              type="file"
-                              accept=".zip,application/zip,application/x-zip-compressed"
-                              onChange={(e) => {
-                                onChange(e.target.files?.[0] || null);
-                                form.trigger("codebaseFile"); 
-                              }}
-                              {...restField} 
-                            />
-                          </FormControl>
-                          <FormDescription>Max file size: 50MB (conceptual limit).</FormDescription>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                  )}
                   {form.watch("inputMethod") === "text" && (
                     <FormField
                       control={form.control}
@@ -455,7 +370,7 @@ export default function AutoDocifyClientPage() {
                           <FormLabel>Paste Your Code</FormLabel>
                           <FormControl>
                             <Textarea
-                              placeholder="Paste your code snippet(s) here. For larger projects, consider URL or .zip."
+                              placeholder="Paste your code snippet(s) here. For larger projects, consider URL."
                               className="min-h-[150px] font-mono text-xs"
                               {...field}
                             />
